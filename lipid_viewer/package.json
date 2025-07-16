@@ -16,10 +16,6 @@
     "analyze": "npm run build:aws -- --mode analyze"
   },
   "dependencies": {
-    "3dmol": "^2.4.0",
-    "kekule": "^1.0.0",
-    "molstar": "^4.0.0",
-    "ngl": "^2.0.0-dev.37",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hot-toast": "^2.4.1",

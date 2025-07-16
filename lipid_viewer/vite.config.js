@@ -9,9 +9,23 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    assetsDir: 'assets'
+    assetsDir: 'assets',
+    // Optimize for AWS Amplify
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          molecular: ['3dmol', 'ngl', 'molstar', 'kekule', 'smiles-drawer']
+        }
+      }
+    }
   },
   optimizeDeps: {
     include: ['rdkit-js']
+  },
+  // For SPA routing
+  preview: {
+    port: 3000
   }
 }) 

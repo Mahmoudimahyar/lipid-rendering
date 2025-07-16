@@ -1,0 +1,17 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - cd lipid_viewer
+        - npm ci
+    build:
+      commands:
+        - npm run build
+  artifacts:
+    baseDirectory: lipid_viewer/dist
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - lipid_viewer/node_modules/**/* 

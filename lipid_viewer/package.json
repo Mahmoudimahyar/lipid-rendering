@@ -6,11 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:aws": "vite build --mode production",
     "preview": "vite preview",
     "test": "jest --coverage",
     "test:e2e": "playwright test",
     "test:all": "npm run test && npm run test:e2e",
-    "lint": "eslint src --max-warnings 0"
+    "lint": "eslint src --max-warnings 0",
+    "deploy:amplify": "npm run build:aws && echo 'Ready for AWS Amplify deployment'",
+    "analyze": "npm run build:aws -- --mode analyze"
   },
   "dependencies": {
     "3dmol": "^2.4.0",

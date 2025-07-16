@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Export Test - Development Tool</title>
+    <!-- 
+    DEVELOPMENT TOOL: This file provides standalone testing for export functionality
+    Purpose: Test PNG, SVG, and GLB export utilities without running the full React app
+    Usage: Open in browser and click export buttons to test functionality
+    Maintenance: Update if export utilities in src/utils/exportUtils.js change
+    -->
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-container {
+            border: 1px solid #ccc;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        .export-buttons {
+            margin: 10px 0;
+        }
+        button {
+            margin: 5px;
+            padding: 10px 15px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        #testSvg {
+            border: 1px solid #ddd;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Export Functionality Test</h1>
+    
+    <div style="background: #e7f3ff; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 4px solid #007bff;">
+        <h3>📋 Development Tool Instructions</h3>
+        <p><strong>Purpose:</strong> Test export utilities independently of the main React application</p>
+        <p><strong>Usage:</strong> 
+            1. Make sure you're serving this from a local server (e.g., <code>npm run dev</code>)<br>
+            2. Click the export buttons below to test each format<br>
+            3. Check browser downloads folder for exported files
+        </p>
+        <p><strong>Files Created:</strong> CCO_[timestamp].png, CCO_[timestamp].svg, CCO_[timestamp].gltf</p>
+    </div>
+    
+    <div class="test-container">
+        <h2>Test SVG Content</h2>
+        <svg id="testSvg" width="400" height="300" viewBox="0 0 400 300">
+            <rect width="400" height="300" fill="#f8f9fa" stroke="#dee2e6"/>
+            <circle cx="200" cy="150" r="60" fill="#007bff" stroke="#0056b3" stroke-width="2"/>
+            <text x="200" y="155" text-anchor="middle" fill="white" font-size="16" font-weight="bold">Test Molecule</text>
+            <text x="200" y="250" text-anchor="middle" fill="#6c757d" font-size="12">CCO (Ethanol)</text>
+        </svg>
+        
+        <div class="export-buttons">
+            <button onclick="testPNGExport()">Export as PNG</button>
+            <button onclick="testSVGExport()">Export as SVG</button>
+            <button onclick="testGLTFExport()">Export as GLTF</button>
+        </div>
+        
+        <div id="status"></div>
+    </div>
+
+    <script type="module">
+        // Import export functions
+        import { exportToPNG, exportToSVG, exportToGLTF } from './src/utils/exportUtils.js';
+        
+        window.testPNGExport = async function() {
+            const status = document.getElementById('status');
+            status.textContent = 'Exporting PNG...';
+            
+            try {
+                const svg = document.getElementById('testSvg');
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const img = new Image();
+                
+                const svgData = new XMLSerializer().serializeToString(svg);
+                const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+                const url = URL.createObjectURL(svgBlob);
+                
+                img.onload = async () => {
+                    canvas.width = 400;
+                    canvas.height = 300;
+                    ctx.fillStyle = 'white';
+                    ctx.fillRect(0, 0, 400, 300);
+                    ctx.drawImage(img, 0, 0);
+                    
+                    const success = await exportToPNG(canvas, 'CCO');
+                    status.textContent = success ? 'PNG exported successfully!' : 'PNG export failed!';
+                    URL.revokeObjectURL(url);
+                };
+                
+                img.src = url;
+            } catch (error) {
+                status.textContent = 'PNG export error: ' + error.message;
+                console.error('PNG export error:', error);
+            }
+        };
+        
+        window.testSVGExport = async function() {
+            const status = document.getElementById('status');
+            status.textContent = 'Exporting SVG...';
+            
+            try {
+                const svg = document.getElementById('testSvg');
+                const success = await exportToSVG(svg, 'CCO');
+                status.textContent = success ? 'SVG exported successfully!' : 'SVG export failed!';
+            } catch (error) {
+                status.textContent = 'SVG export error: ' + error.message;
+                console.error('SVG export error:', error);
+            }
+        };
+        
+        window.testGLTFExport = async function() {
+            const status = document.getElementById('status');
+            status.textContent = 'Exporting GLTF...';
+            
+            try {
+                const gltfData = {
+                    asset: { 
+                        version: "2.0", 
+                        generator: "Export Test",
+                        copyright: "Test molecular structure"
+                    },
+                    scene: 0,
+                    scenes: [{ 
+                        name: "Test Scene",
+                        nodes: [0] 
+                    }],
+                    nodes: [{ 
+                        name: "Test_Molecule_CCO", 
+                        extras: { 
+                            molecularData: {
+                                smiles: "CCO",
+                                formula: "C2H6O",
+                                description: "Test export from HTML page",
+                                exportTime: new Date().toISOString()
+                            }
+                        } 
+                    }],
+                    extras: {
+                        description: "Test molecular structure",
+                        software: "Export Test Tool"
+                    }
+                };
+                
+                const jsonString = JSON.stringify(gltfData, null, 2);
+                const success = await exportToGLTF(jsonString, 'CCO');
+                
+                status.textContent = success ? 'GLTF exported successfully!' : 'GLTF export failed!';
+            } catch (error) {
+                status.textContent = 'GLTF export error: ' + error.message;
+                console.error('GLTF export error:', error);
+            }
+        };
+        
+        // Test status
+        document.getElementById('status').textContent = 'Export functions loaded. Click buttons to test.';
+    </script>
+</body>
+</html> 

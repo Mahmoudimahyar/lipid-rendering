@@ -1,0 +1,578 @@
+import React from 'react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import '@testing-library/jest-dom'
+import MoleculeViewer from './MoleculeViewer'
+
+// Mock the 3D libraries
+const mockNGLStage = {
+  loadFile: jest.fn().mockResolvedValue({
+    addRepresentation: jest.fn().mockReturnThis(),
+    autoView: jest.fn()
+  }),
+  dispose: jest.fn()
+}
+
+const mockMolstarPlugin = {
+  builders: {
+    data: {
+      download: jest.fn().mockResolvedValue({})
+    },
+    structure: {
+      parseTrajectory: jest.fn().mockResolvedValue({}),
+      createModel: jest.fn().mockResolvedValue({}),
+      createStructure: jest.fn().mockResolvedValue({}),
+      representation: {
+        addRepresentation: jest.fn().mockResolvedValue({})
+      }
+    }
+  },
+  dataTransaction: jest.fn((callback) => callback()),
+  managers: {
+    camera: {
+      focusLoci: jest.fn()
+    },
+    structure: {
+      hierarchy: {
+        current: {
+          structures: []
+        }
+      }
+    }
+  },
+  dispose: jest.fn()
+}
+
+// Mock global objects - ensure they're available before tests start
+beforeAll(() => {
+  Object.defineProperty(window, 'NGL', {
+    writable: true,
+    value: {
+      Stage: jest.fn().mockImplementation(() => mockNGLStage)
+    }
+  })
+
+  Object.defineProperty(window, 'molstar', {
+    writable: true,
+    value: {
+      createPlugin: jest.fn().mockResolvedValue(mockMolstarPlugin)
+    }
+  })
+
+  Object.defineProperty(window, '$3Dmol', {
+    writable: true,
+    value: {
+      createViewer: jest.fn().mockReturnValue({
+        clear: jest.fn(),
+        addModel: jest.fn(),
+        setStyle: jest.fn(),
+        zoomTo: jest.fn(),
+        center: jest.fn(),
+        rotate: jest.fn(),
+        render: jest.fn(),
+        getModel: jest.fn().mockReturnValue({
+          selectedAtoms: jest.fn().mockReturnValue(Array(14).fill({}))
+        })
+      }),
+      rasmolElementColors: {}
+    }
+  })
+})
+
+// Mock URL.createObjectURL and revokeObjectURL
+Object.defineProperty(window.URL, 'createObjectURL', {
+  writable: true,
+  value: jest.fn().mockReturnValue('blob:test-url')
+})
+
+Object.defineProperty(window.URL, 'revokeObjectURL', {
+  writable: true,
+  value: jest.fn()
+})
+
+// Mock File constructor
+global.File = jest.fn().mockImplementation((parts, filename, properties) => ({
+  name: filename,
+  size: parts[0].length,
+  type: properties?.type || 'application/octet-stream'
+}))
+
+// Mock Blob constructor
+global.Blob = jest.fn().mockImplementation((parts, properties) => ({
+  size: parts[0].length,
+  type: properties?.type || 'application/octet-stream'
+}))
+
+// Mock generateMolecule3D to return proper 3D data
+jest.mock('../utils/smilesValidator', () => ({
+  validateSMILES: jest.fn().mockResolvedValue(true),
+  generateMolecule3D: jest.fn().mockResolvedValue({
+    smiles: 'CN1C=NC2=C1C(=O)N(C(=O)N2C)C',
+    molblock: `
+     RDKit          3D
+
+ 14 15  0  0  0  0  0  0  0  0999 V2000
+    2.7760    0.0000    0.5000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.3880    0.8000    0.2000 N   0  0  0  0  0  0  0  0  0  0  0  0
+M  END
+`,
+    svg: '<svg>test</svg>',
+    json: { atoms: [] }
+  })
+}))
+
+describe('MoleculeViewer 3D Renderers', () => {
+  const mockMolData = {
+    smiles: 'CN1C=NC2=C1C(=O)N(C(=O)N2C)C',
+    molblock: `
+     RDKit          3D
+
+ 14 15  0  0  0  0  0  0  0  0999 V2000
+    2.7760    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.3880    0.8000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+M  END
+`,
+    svg: '<svg>test</svg>',
+    json: { atoms: [] }
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    // Mock console methods to avoid noise in tests
+    jest.spyOn(console, 'log').mockImplementation(() => {})
+    jest.spyOn(console, 'warn').mockImplementation(() => {})
+    jest.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  describe('NGL Renderer', () => {
+    test('should render NGL viewer with valid SMILES and molecular data', async () => {
+      render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      // Wait for the component to initialize
+      await waitFor(() => {
+        expect(screen.getByRole('region')).toBeInTheDocument()
+      }, { timeout: 3000 })
+
+      // Check if NGL Stage was created
+      await waitFor(() => {
+        expect(window.NGL.Stage).toHaveBeenCalled()
+      }, { timeout: 1000 })
+
+      // Verify the stage was created with correct parameters
+      expect(window.NGL.Stage).toHaveBeenCalledWith(
+        expect.any(Element),
+        expect.objectContaining({
+          backgroundColor: 'black',
+          quality: 'medium',
+          sampleLevel: 1
+        })
+      )
+    })
+
+    test('should handle NGL library not being available', async () => {
+      // Temporarily remove NGL from window
+      const originalNGL = window.NGL
+      delete window.NGL
+
+      render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText(/NGL Loading/)).toBeInTheDocument()
+      })
+
+      // Restore NGL
+      window.NGL = originalNGL
+    })
+
+    test('should load SDF data correctly in NGL', async () => {
+      render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.NGL.Stage).toHaveBeenCalled()
+      }, { timeout: 1000 })
+
+      // Check if loadFile was called with SDF data
+      await waitFor(() => {
+        expect(mockNGLStage.loadFile).toHaveBeenCalledWith(
+          expect.any(File),
+          { ext: 'sdf' }
+        )
+      }, { timeout: 1000 })
+    })
+
+    test('should properly cleanup NGL stage on unmount', async () => {
+      const { unmount } = render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.NGL.Stage).toHaveBeenCalled()
+      })
+
+      unmount()
+
+      // Verify cleanup was called
+      expect(mockNGLStage.dispose).toHaveBeenCalled()
+    })
+
+    test('should handle NGL loading errors gracefully', async () => {
+      // Mock loadFile to reject
+      mockNGLStage.loadFile.mockRejectedValueOnce(new Error('Load failed'))
+
+      render(
+        <MoleculeViewer 
+          smiles="INVALID_SMILES" 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.NGL.Stage).toHaveBeenCalled()
+      })
+
+      // Should fall back to SMILES representation
+      await waitFor(() => {
+        expect(mockNGLStage.loadFile).toHaveBeenCalledWith(
+          expect.any(File),
+          { ext: 'smi' }
+        )
+      })
+    })
+  })
+
+  describe('Mol* (Molstar) Renderer', () => {
+    test('should render Molstar viewer with valid SMILES and molecular data', async () => {
+      render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="Mol*" 
+        />
+      )
+
+      // Wait for the component to initialize
+      await waitFor(() => {
+        expect(screen.getByRole('region')).toBeInTheDocument()
+      }, { timeout: 3000 })
+
+      // Check if Molstar plugin was created
+      await waitFor(() => {
+        expect(window.molstar.createPlugin).toHaveBeenCalled()
+      }, { timeout: 1000 })
+
+      // Verify the plugin was created with correct parameters
+      expect(window.molstar.createPlugin).toHaveBeenCalledWith(
+        expect.any(Element),
+        expect.objectContaining({
+          layoutIsExpanded: false,
+          layoutShowControls: false,
+          layoutShowRemoteState: false
+        })
+      )
+    })
+
+    test('should handle Molstar library not being available', async () => {
+      // Temporarily remove molstar from window
+      const originalMolstar = window.molstar
+      delete window.molstar
+
+      render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="Mol*" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText(/Mol\* Loading/)).toBeInTheDocument()
+      })
+
+      // Restore molstar
+      window.molstar = originalMolstar
+    })
+
+    test('should load SDF data correctly in Molstar', async () => {
+      render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="Mol*" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.molstar.createPlugin).toHaveBeenCalled()
+      }, { timeout: 1000 })
+
+      // Check if data transaction was initiated
+      await waitFor(() => {
+        expect(mockMolstarPlugin.dataTransaction).toHaveBeenCalled()
+      }, { timeout: 1000 })
+
+      // Verify structure building methods were called
+      expect(mockMolstarPlugin.builders.data.download).toHaveBeenCalled()
+      expect(mockMolstarPlugin.builders.structure.parseTrajectory).toHaveBeenCalled()
+      expect(mockMolstarPlugin.builders.structure.createModel).toHaveBeenCalled()
+      expect(mockMolstarPlugin.builders.structure.createStructure).toHaveBeenCalled()
+    })
+
+    test('should properly cleanup Molstar plugin on unmount', async () => {
+      const { unmount } = render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="Mol*" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.molstar.createPlugin).toHaveBeenCalled()
+      })
+
+      unmount()
+
+      // Verify cleanup was called
+      expect(mockMolstarPlugin.dispose).toHaveBeenCalled()
+    })
+
+    test('should handle Molstar plugin creation errors gracefully', async () => {
+      // Mock createPlugin to reject
+      window.molstar.createPlugin.mockRejectedValueOnce(new Error('Plugin creation failed'))
+
+      render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="Mol*" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.molstar.createPlugin).toHaveBeenCalled()
+      })
+
+      // Should show error message
+      await waitFor(() => {
+        expect(screen.getByText(/Mol\* Error/)).toBeInTheDocument()
+      })
+    })
+
+    test('should add multiple representations to Molstar', async () => {
+      render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="Mol*" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.molstar.createPlugin).toHaveBeenCalled()
+      }, { timeout: 1000 })
+
+      await waitFor(() => {
+        expect(mockMolstarPlugin.dataTransaction).toHaveBeenCalled()
+      }, { timeout: 1000 })
+
+      // Should add both ball-and-stick and spacefill representations
+      expect(mockMolstarPlugin.builders.structure.representation.addRepresentation).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          type: 'ball-and-stick'
+        })
+      )
+
+      expect(mockMolstarPlugin.builders.structure.representation.addRepresentation).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          type: 'spacefill'
+        })
+      )
+    })
+  })
+
+  describe('3D Renderer Integration', () => {
+    test('should switch between 3D renderers correctly', async () => {
+      const { rerender } = render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      // Wait for NGL to load
+      await waitFor(() => {
+        expect(window.NGL.Stage).toHaveBeenCalled()
+      })
+
+      // Switch to Mol*
+      rerender(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="Mol*" 
+        />
+      )
+
+      // Should cleanup NGL and initialize Molstar
+      await waitFor(() => {
+        expect(mockNGLStage.dispose).toHaveBeenCalled()
+        expect(window.molstar.createPlugin).toHaveBeenCalled()
+      })
+    })
+
+    test('should handle empty SMILES string gracefully', async () => {
+      render(
+        <MoleculeViewer 
+          smiles="" 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText(/No SMILES string provided/)).toBeInTheDocument()
+      })
+
+      // Should not attempt to create 3D viewers
+      expect(window.NGL.Stage).not.toHaveBeenCalled()
+      expect(window.molstar.createPlugin).not.toHaveBeenCalled()
+    })
+
+    test('should work with molecular data from RDKit', async () => {
+      // Mock a successful molecule generation
+      const mockGenerateMolecule3D = jest.fn().mockResolvedValue(mockMolData)
+      
+      render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.NGL.Stage).toHaveBeenCalled()
+      })
+
+      // Should use the SDF data from RDKit
+      await waitFor(() => {
+        expect(mockNGLStage.loadFile).toHaveBeenCalledWith(
+          expect.any(File),
+          { ext: 'sdf' }
+        )
+      })
+    })
+  })
+
+  describe('Error Handling', () => {
+    test('should handle DOM element not found gracefully', async () => {
+      // Mock getElementById to return null
+      const originalGetElementById = document.getElementById
+      document.getElementById = jest.fn().mockReturnValue(null)
+
+      render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      // Should not crash and not create viewers
+      await waitFor(() => {
+        expect(window.NGL.Stage).not.toHaveBeenCalled()
+      })
+
+      // Restore original method
+      document.getElementById = originalGetElementById
+    })
+
+    test('should handle component unmount during initialization', async () => {
+      const { unmount } = render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      // Unmount immediately
+      unmount()
+
+      // Should not create viewers after unmount
+      await new Promise(resolve => setTimeout(resolve, 200))
+      expect(window.NGL.Stage).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('Performance and Memory', () => {
+    test('should properly cleanup Blob URLs', async () => {
+      render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="Mol*" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.molstar.createPlugin).toHaveBeenCalled()
+      })
+
+      await waitFor(() => {
+        expect(window.URL.createObjectURL).toHaveBeenCalled()
+        expect(window.URL.revokeObjectURL).toHaveBeenCalled()
+      })
+    })
+
+    test('should handle multiple rapid renderer switches', async () => {
+      const { rerender } = render(
+        <MoleculeViewer 
+          smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      // Rapidly switch renderers
+      rerender(<MoleculeViewer smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" mode="3D" renderer="Mol*" />)
+      rerender(<MoleculeViewer smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" mode="3D" renderer="NGL" />)
+      rerender(<MoleculeViewer smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" mode="3D" renderer="Mol*" />)
+
+      // Should handle cleanup properly
+      await waitFor(() => {
+        expect(mockNGLStage.dispose).toHaveBeenCalled()
+        expect(mockMolstarPlugin.dispose).toHaveBeenCalled()
+      })
+    })
+  })
+}) 

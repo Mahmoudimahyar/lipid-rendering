@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-gray-50 font-sans;
+  }
+}
+
+@layer components {
+  .molecule-viewer {
+    @apply bg-molecule-bg border border-gray-300 rounded-lg shadow-lg;
+  }
+  
+  .control-button {
+    @apply px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors;
+  }
+  
+  .control-button:disabled {
+    @apply bg-gray-300 cursor-not-allowed;
+  }
+} 

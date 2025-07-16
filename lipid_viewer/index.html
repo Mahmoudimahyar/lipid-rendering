@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/molecule.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lipid Viewer - Molecular Visualization</title>
+    <meta name="description" content="Interactive 2D/3D molecular visualization tool for lipids and other molecules" />
+    
+    <!-- 3D Molecular Visualization Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.2.0/3Dmol-min.js"></script>
+    <!-- NGL Viewer -->
+    <script src="https://cdn.jsdelivr.net/npm/ngl@2.2.1/dist/ngl.min.js"></script>
+    <!-- Mol* (Molstar) - Updated CDN and API -->
+    <script src="https://unpkg.com/molstar@4.2.0/build/viewer/molstar.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html> 

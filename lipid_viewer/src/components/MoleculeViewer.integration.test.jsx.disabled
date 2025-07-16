@@ -1,0 +1,581 @@
+import React from 'react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import '@testing-library/jest-dom'
+import MoleculeViewer from './MoleculeViewer'
+
+// Mock all 3D libraries
+const mockViewer3Dmol = {
+  clear: jest.fn(),
+  addModel: jest.fn(),
+  setStyle: jest.fn(),
+  zoomTo: jest.fn(),
+  center: jest.fn(),
+  rotate: jest.fn(),
+  render: jest.fn(),
+  getModel: jest.fn().mockReturnValue({
+    selectedAtoms: jest.fn().mockReturnValue(Array(14).fill({}))
+  })
+}
+
+const mockStageNGL = {
+  loadFile: jest.fn().mockResolvedValue({
+    addRepresentation: jest.fn().mockReturnThis(),
+    autoView: jest.fn()
+  }),
+  dispose: jest.fn()
+}
+
+const mockPluginMolstar = {
+  builders: {
+    data: {
+      download: jest.fn().mockResolvedValue({})
+    },
+    structure: {
+      parseTrajectory: jest.fn().mockResolvedValue({}),
+      createModel: jest.fn().mockResolvedValue({}),
+      createStructure: jest.fn().mockResolvedValue({}),
+      representation: {
+        addRepresentation: jest.fn().mockResolvedValue({})
+      }
+    }
+  },
+  dataTransaction: jest.fn((callback) => callback()),
+  managers: {
+    camera: {
+      focusLoci: jest.fn()
+    },
+    structure: {
+      hierarchy: {
+        current: {
+          structures: []
+        }
+      }
+    }
+  },
+  dispose: jest.fn()
+}
+
+// Setup global mocks
+Object.defineProperty(window, '$3Dmol', {
+  writable: true,
+  value: {
+    createViewer: jest.fn().mockReturnValue(mockViewer3Dmol),
+    rasmolElementColors: {}
+  }
+})
+
+Object.defineProperty(window, 'NGL', {
+  writable: true,
+  value: {
+    Stage: jest.fn().mockImplementation(() => mockStageNGL)
+  }
+})
+
+Object.defineProperty(window, 'molstar', {
+  writable: true,
+  value: {
+    createPlugin: jest.fn().mockResolvedValue(mockPluginMolstar)
+  }
+})
+
+// Mock browser APIs
+global.Blob = jest.fn().mockImplementation((parts, properties) => ({
+  size: parts[0].length,
+  type: properties?.type || 'application/octet-stream'
+}))
+
+global.File = jest.fn().mockImplementation((parts, filename, properties) => ({
+  name: filename,
+  size: parts[0].length,
+  type: properties?.type || 'application/octet-stream'
+}))
+
+Object.defineProperty(window.URL, 'createObjectURL', {
+  writable: true,
+  value: jest.fn().mockReturnValue('blob:test-url')
+})
+
+Object.defineProperty(window.URL, 'revokeObjectURL', {
+  writable: true,
+  value: jest.fn()
+})
+
+describe('MoleculeViewer 3D Integration Tests', () => {
+  const testSMILES = 'CN1C=NC2=C1C(=O)N(C(=O)N2C)C' // Caffeine
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    // Mock console to reduce test noise
+    jest.spyOn(console, 'log').mockImplementation(() => {})
+    jest.spyOn(console, 'warn').mockImplementation(() => {})
+    jest.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  describe('Complete 3D Renderer Workflow', () => {
+    test('should cycle through all 3D renderers successfully', async () => {
+      const { rerender } = render(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="3Dmol.js" 
+        />
+      )
+
+      // Test 3Dmol.js
+      await waitFor(() => {
+        expect(window.$3Dmol.createViewer).toHaveBeenCalled()
+      }, { timeout: 2000 })
+
+      expect(mockViewer3Dmol.addModel).toHaveBeenCalled()
+      expect(mockViewer3Dmol.setStyle).toHaveBeenCalled()
+      expect(mockViewer3Dmol.render).toHaveBeenCalled()
+
+      // Switch to NGL
+      rerender(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(mockViewer3Dmol.clear).toHaveBeenCalled()
+        expect(window.NGL.Stage).toHaveBeenCalled()
+      }, { timeout: 2000 })
+
+      expect(mockStageNGL.loadFile).toHaveBeenCalled()
+
+      // Switch to Mol*
+      rerender(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="Mol*" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(mockStageNGL.dispose).toHaveBeenCalled()
+        expect(window.molstar.createPlugin).toHaveBeenCalled()
+      }, { timeout: 2000 })
+
+      expect(mockPluginMolstar.dataTransaction).toHaveBeenCalled()
+
+      // Switch back to 3Dmol.js
+      rerender(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="3Dmol.js" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(mockPluginMolstar.dispose).toHaveBeenCalled()
+        expect(window.$3Dmol.createViewer).toHaveBeenCalledTimes(2)
+      }, { timeout: 2000 })
+    })
+
+    test('should handle mode switching from 2D to 3D for each renderer', async () => {
+      const { rerender } = render(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="2D" 
+          renderer="RDKit.js" 
+        />
+      )
+
+      // Start in 2D mode - no 3D libraries should be called
+      await waitFor(() => {
+        expect(screen.getByRole('region')).toBeInTheDocument()
+      })
+
+      expect(window.$3Dmol.createViewer).not.toHaveBeenCalled()
+      expect(window.NGL.Stage).not.toHaveBeenCalled()
+      expect(window.molstar.createPlugin).not.toHaveBeenCalled()
+
+      // Switch to 3D with 3Dmol.js
+      rerender(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="3Dmol.js" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.$3Dmol.createViewer).toHaveBeenCalled()
+      })
+
+      // Switch renderer while staying in 3D
+      rerender(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.NGL.Stage).toHaveBeenCalled()
+      })
+
+      // Switch back to 2D - should cleanup 3D
+      rerender(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="2D" 
+          renderer="RDKit.js" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(mockStageNGL.dispose).toHaveBeenCalled()
+      })
+    })
+
+    test('should handle SMILES changes in 3D mode', async () => {
+      const { rerender } = render(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="3Dmol.js" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.$3Dmol.createViewer).toHaveBeenCalled()
+      })
+
+      // Change SMILES while in 3D mode
+      const newSMILES = 'CCO' // Ethanol
+      rerender(
+        <MoleculeViewer 
+          smiles={newSMILES} 
+          mode="3D" 
+          renderer="3Dmol.js" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(mockViewer3Dmol.clear).toHaveBeenCalled()
+        expect(mockViewer3Dmol.addModel).toHaveBeenCalledTimes(2)
+      })
+    })
+  })
+
+  describe('Error Recovery and Resilience', () => {
+    test('should handle library loading failures gracefully', async () => {
+      // Temporarily remove all 3D libraries
+      const original3Dmol = window.$3Dmol
+      const originalNGL = window.NGL
+      const originalMolstar = window.molstar
+
+      delete window.$3Dmol
+      delete window.NGL
+      delete window.molstar
+
+      const { rerender } = render(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="3Dmol.js" 
+        />
+      )
+
+      // Should show loading message for 3Dmol.js
+      await waitFor(() => {
+        expect(screen.getByText(/3Dmol.js Loading/)).toBeInTheDocument()
+      })
+
+      // Switch to NGL
+      rerender(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText(/NGL Loading/)).toBeInTheDocument()
+      })
+
+      // Switch to Mol*
+      rerender(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="Mol*" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText(/Mol\* Loading/)).toBeInTheDocument()
+      })
+
+      // Restore libraries
+      window.$3Dmol = original3Dmol
+      window.NGL = originalNGL
+      window.molstar = originalMolstar
+    })
+
+    test('should handle renderer errors and continue working', async () => {
+      // Make 3Dmol.js fail
+      window.$3Dmol.createViewer.mockImplementationOnce(() => {
+        throw new Error('3Dmol failed to initialize')
+      })
+
+      const { rerender } = render(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="3Dmol.js" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText(/3Dmol.js Error/)).toBeInTheDocument()
+      })
+
+      // Switch to working NGL renderer
+      rerender(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.NGL.Stage).toHaveBeenCalled()
+      })
+
+      // NGL should work normally
+      expect(mockStageNGL.loadFile).toHaveBeenCalled()
+    })
+
+    test('should handle memory cleanup properly on rapid changes', async () => {
+      const { rerender } = render(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="3Dmol.js" 
+        />
+      )
+
+      // Rapidly switch between different configurations
+      for (let i = 0; i < 5; i++) {
+        rerender(<MoleculeViewer smiles={testSMILES} mode="3D" renderer="NGL" />)
+        rerender(<MoleculeViewer smiles={testSMILES} mode="3D" renderer="Mol*" />)
+        rerender(<MoleculeViewer smiles={testSMILES} mode="3D" renderer="3Dmol.js" />)
+      }
+
+      // All cleanup methods should have been called
+      await waitFor(() => {
+        expect(mockViewer3Dmol.clear).toHaveBeenCalled()
+        expect(mockStageNGL.dispose).toHaveBeenCalled()
+        expect(mockPluginMolstar.dispose).toHaveBeenCalled()
+      })
+    })
+  })
+
+  describe('Molecular Data Handling', () => {
+    test('should handle different molecular data formats across renderers', async () => {
+      const complexMolecule = 'C1=CC=C(C=C1)C2=CC=CC=C2' // Biphenyl
+      
+      const { rerender } = render(
+        <MoleculeViewer 
+          smiles={complexMolecule} 
+          mode="3D" 
+          renderer="3Dmol.js" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.$3Dmol.createViewer).toHaveBeenCalled()
+      })
+
+      // Switch to NGL with same molecule
+      rerender(
+        <MoleculeViewer 
+          smiles={complexMolecule} 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.NGL.Stage).toHaveBeenCalled()
+      })
+
+      // Switch to Mol* with same molecule
+      rerender(
+        <MoleculeViewer 
+          smiles={complexMolecule} 
+          mode="3D" 
+          renderer="Mol*" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.molstar.createPlugin).toHaveBeenCalled()
+      })
+
+      // All renderers should handle the same molecule
+      expect(mockViewer3Dmol.addModel).toHaveBeenCalled()
+      expect(mockStageNGL.loadFile).toHaveBeenCalled()
+      expect(mockPluginMolstar.dataTransaction).toHaveBeenCalled()
+    })
+
+    test('should handle invalid SMILES across all renderers', async () => {
+      const invalidSMILES = 'INVALID[SMILES]STRING'
+      
+      const { rerender } = render(
+        <MoleculeViewer 
+          smiles={invalidSMILES} 
+          mode="3D" 
+          renderer="3Dmol.js" 
+        />
+      )
+
+      // Each renderer should attempt to handle the invalid SMILES
+      await waitFor(() => {
+        expect(window.$3Dmol.createViewer).toHaveBeenCalled()
+      })
+
+      rerender(
+        <MoleculeViewer 
+          smiles={invalidSMILES} 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.NGL.Stage).toHaveBeenCalled()
+      })
+
+      rerender(
+        <MoleculeViewer 
+          smiles={invalidSMILES} 
+          mode="3D" 
+          renderer="Mol*" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.molstar.createPlugin).toHaveBeenCalled()
+      })
+
+      // All should handle gracefully without crashing
+      expect(mockViewer3Dmol.addModel).toHaveBeenCalled()
+      expect(mockStageNGL.loadFile).toHaveBeenCalled()
+      expect(mockPluginMolstar.dataTransaction).toHaveBeenCalled()
+    })
+  })
+
+  describe('Performance Considerations', () => {
+    test('should not create multiple instances when props do not change', async () => {
+      const { rerender } = render(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="3Dmol.js" 
+        />
+      )
+
+      await waitFor(() => {
+        expect(window.$3Dmol.createViewer).toHaveBeenCalledTimes(1)
+      })
+
+      // Rerender with same props
+      rerender(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="3Dmol.js" 
+        />
+      )
+
+      // Should not create another viewer
+      await new Promise(resolve => setTimeout(resolve, 500))
+      expect(window.$3Dmol.createViewer).toHaveBeenCalledTimes(1)
+    })
+
+    test('should properly handle component unmounting during async operations', async () => {
+      const { unmount } = render(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="Mol*" 
+        />
+      )
+
+      // Unmount before async operations complete
+      unmount()
+
+      // Should not create plugin after unmount
+      await new Promise(resolve => setTimeout(resolve, 500))
+      expect(mockPluginMolstar.dataTransaction).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('Accessibility and User Experience', () => {
+    test('should provide appropriate ARIA labels and roles', async () => {
+      render(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="3Dmol.js" 
+        />
+      )
+
+      // Should have proper accessibility attributes
+      await waitFor(() => {
+        expect(screen.getByRole('region')).toBeInTheDocument()
+      })
+
+      // Check for accessible content
+      const container = screen.getByRole('region')
+      expect(container).toHaveAttribute('aria-live', 'polite')
+    })
+
+    test('should provide loading states for all renderers', async () => {
+      const { rerender } = render(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="3Dmol.js" 
+        />
+      )
+
+      // Should show loading state initially
+      expect(screen.getByText(/Loading/)).toBeInTheDocument()
+
+      await waitFor(() => {
+        expect(window.$3Dmol.createViewer).toHaveBeenCalled()
+      })
+
+      // Switch renderers and check loading states
+      rerender(
+        <MoleculeViewer 
+          smiles={testSMILES} 
+          mode="3D" 
+          renderer="NGL" 
+        />
+      )
+
+      expect(screen.getByText(/Loading/)).toBeInTheDocument()
+
+      await waitFor(() => {
+        expect(window.NGL.Stage).toHaveBeenCalled()
+      })
+    })
+  })
+}) 

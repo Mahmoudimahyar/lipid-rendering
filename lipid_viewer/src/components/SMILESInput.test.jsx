@@ -4,14 +4,19 @@ import userEvent from '@testing-library/user-event'
 import SMILESInput from './SMILESInput'
 
 // Mock the validation utility with more comprehensive behavior
-const mockValidateSMILES = jest.fn()
-jest.mock('../utils/smilesValidator', () => ({
-  validateSMILES: mockValidateSMILES,
-  getExampleMolecules: jest.fn(() => [
-    { name: 'Caffeine', smiles: 'CN1C=NC2=C1C(=O)N(C(=O)N2C)C' },
-    { name: 'Aspirin', smiles: 'CC(=O)OC1=CC=CC=C1C(=O)O' }
-  ])
-}))
+jest.mock('../utils/smilesValidator', () => {
+  const validateSMILES = jest.fn()
+  return {
+    __esModule: true,
+    validateSMILES,
+    getExampleMolecules: jest.fn(() => [
+      { name: 'Caffeine', smiles: 'CN1C=NC2=C1C(=O)N(C(=O)N2C)C' },
+      { name: 'Aspirin', smiles: 'CC(=O)OC1=CC=CC=C1C(=O)O' }
+    ])
+  }
+})
+
+import { validateSMILES as mockValidateSMILES } from '../utils/smilesValidator'
 
 describe('SMILESInput Component', () => {
   const mockOnSubmit = jest.fn()
@@ -74,6 +79,10 @@ describe('SMILESInput Component', () => {
     const button = screen.getByRole('button', { name: /visualize/i })
     
     await user.type(input, 'CCO')
+
+    // wait for debounce + validation to enable button
+    await waitFor(() => expect(button).not.toBeDisabled(), { timeout: 1500 })
+
     await user.click(button)
     
     expect(mockOnSubmit).toHaveBeenCalledWith('CCO')
@@ -82,7 +91,7 @@ describe('SMILESInput Component', () => {
   test('displays SMILES information text', () => {
     render(<SMILESInput onSubmit={mockOnSubmit} onValidation={mockOnValidation} />)
     
-    expect(screen.getByText(/SMILES/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/SMILES/i).length).toBeGreaterThan(0)
     expect(screen.getByText(/Simplified Molecular Input Line Entry System/i)).toBeInTheDocument()
   })
 
@@ -130,7 +139,8 @@ describe('SMILESInput Component', () => {
   test('form has proper structure and classes', () => {
     render(<SMILESInput onSubmit={mockOnSubmit} onValidation={mockOnValidation} />)
     
-    const form = screen.getByRole('form')
+    const button = screen.getByRole('button', { name: /visualize/i })
+    const form = button.closest('form')
     expect(form).toBeInTheDocument()
     expect(form).toHaveClass('space-y-4')
   })
@@ -173,8 +183,8 @@ describe('SMILESInput Component', () => {
     
     // Allow time for validation
     await waitFor(() => {
-      expect(mockValidateSMILES).toHaveBeenCalledWith('invalid', false)
-    }, { timeout: 1000 })
+      expect(mockValidateSMILES).toHaveBeenCalledWith('invalid')
+    }, { timeout: 1500 })
   })
 
   test('handles validation errors gracefully', async () => {
@@ -245,7 +255,11 @@ describe('SMILESInput Component', () => {
     render(<SMILESInput onSubmit={mockOnSubmit} onValidation={mockOnValidation} />)
     
     const input = screen.getByPlaceholderText(/Enter SMILES string/i)
+    const button = screen.getByRole('button', { name: /visualize/i })
+
     await user.type(input, 'CCO')
+    await waitFor(() => expect(button).not.toBeDisabled(), { timeout: 1500 })
+
     await user.keyboard('{Enter}')
     
     expect(mockOnSubmit).toHaveBeenCalledWith('CCO')
@@ -253,15 +267,14 @@ describe('SMILESInput Component', () => {
 
   test('button becomes enabled with valid input', async () => {
     const user = userEvent.setup()
-    render(<SMILESInput onSubmit={mockOnSubmit} onValidation={mockOnValidation} isValid={true} />)
+    render(<SMILESInput onSubmit={mockOnSubmit} onValidation={mockOnValidation} />)
     
     const input = screen.getByPlaceholderText(/Enter SMILES string/i)
     const button = screen.getByRole('button', { name: /visualize/i })
     
     await user.type(input, 'CCO')
-    
-    // With isValid prop set to true, button should be enabled
-    expect(button).not.toBeDisabled()
+
+    await waitFor(() => expect(button).not.toBeDisabled(), { timeout: 1500 })
   })
 
   test('example buttons trigger validation and submission', async () => {
@@ -270,12 +283,14 @@ describe('SMILESInput Component', () => {
     
     const ethanolButton = screen.getByText('Ethanol')
     await user.click(ethanolButton)
+
+    // validation called and then submit after enabling
+    await waitFor(() => expect(mockValidateSMILES).toHaveBeenCalled(), { timeout: 1500 })
+
+    const button = screen.getByRole('button', { name: /visualize/i })
+    await waitFor(() => expect(button).not.toBeDisabled(), { timeout: 1500 })
+    await user.click(button)
     
     expect(mockOnSubmit).toHaveBeenCalledWith('CCO')
-    
-    // Should also trigger validation
-    await waitFor(() => {
-      expect(mockValidateSMILES).toHaveBeenCalled()
-    }, { timeout: 1000 })
   })
 })

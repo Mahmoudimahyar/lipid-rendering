@@ -2,6 +2,35 @@
 
 A modern React application for visualizing lipid molecules using SMILES notation. This interactive web tool allows users to input molecular structures and view them in various 2D and 3D representations.
 
+## Quick Runbook (avoid common pitfalls)
+
+- Always run commands inside `lipid_viewer` (not the repo root)
+- Dev server: runs on http://localhost:3000
+- Preview server (production build): runs on http://localhost:4173
+
+Steps:
+
+```bash
+# 1) From repository root, cd into the app folder
+cd lipid_viewer
+
+# 2) Install dependencies
+npm install
+
+# 3) Start the dev server (Vite)
+npm run dev
+# open http://localhost:3000
+
+# If you prefer serving the production build locally:
+npm run build            # creates dist/
+npm run preview          # serves dist/ at http://localhost:4173
+```
+
+Troubleshooting:
+- If you see “Could not read package.json” errors, you are in the wrong folder. Change directory to `lipid_viewer` and retry.
+- If `npm run preview` says “dist does not exist,” run `npm run build` first.
+- If a port is busy, use: `npm run dev -- --port 3001` or `npm run preview -- --port 4174`.
+
 ## Features
 
 - 🧪 **SMILES Input**: Enter molecular structures using SMILES notation
@@ -28,41 +57,40 @@ The application is accessible at: [https://github.com/Mahmoudimahyar/lipid-rende
 
 ### Prerequisites
 
-- Node.js (version 16 or higher)
-- npm or yarn
+- Node.js (version 18+)
+- npm
 
 ### Installation
 
-1. Clone the repository:
 ```bash
 git clone https://github.com/Mahmoudimahyar/lipid-rendering.git
 cd lipid-rendering
-```
-
-2. Navigate to the application directory:
-```bash
 cd lipid_viewer
-```
-
-3. Install dependencies:
-```bash
 npm install
 ```
 
-4. Start the development server:
+### Development
+
 ```bash
 npm run dev
+# open http://localhost:3000
 ```
 
-5. Open your browser and visit `http://localhost:3001`
+### Production Preview
+
+```bash
+npm run build
+npm run preview
+# open http://localhost:4173
+```
 
 ## Available Scripts
 
 In the `lipid_viewer` directory, you can run:
 
-- `npm run dev` - Starts the development server
+- `npm run dev` - Starts the development server on port 3000 (host exposed)
 - `npm run build` - Builds the app for production
-- `npm run preview` - Preview the production build locally
+- `npm run preview` - Preview the production build on port 4173 (host exposed)
 - `npm test` - Runs the test suite
 - `npm run test:watch` - Runs tests in watch mode
 - `npm run test:coverage` - Runs tests with coverage report
@@ -84,37 +112,20 @@ lipid_viewer/
 │   │   └── exportUtils.js
 │   ├── App.jsx             # Main application component
 │   └── main.jsx           # Application entry point
-├── tests/                  # E2E tests
 ├── public/                # Static assets
+├── dist/                  # Production build output (after npm run build)
 └── package.json
 ```
 
-## Usage
-
-1. **Enter SMILES**: Input a valid SMILES notation in the text field
-2. **Select Renderer**: Choose your preferred visualization engine
-3. **Adjust Controls**: Use the view controls to customize the display
-4. **Export**: Save your molecular visualization
-
-### Example SMILES
-
-Try these example SMILES notations:
-- `CCO` (Ethanol)
-- `CC(=O)OC1=CC=CC=C1C(=O)O` (Aspirin)
-- `CN1C=NC2=C1C(=O)N(C(=O)N2C)C` (Caffeine)
-
 ## Testing
 
-The project includes comprehensive testing:
-
-- **Unit Tests**: Component and utility function tests
-- **Integration Tests**: Component interaction tests
-- **E2E Tests**: Full user workflow tests
-
-Run all tests:
 ```bash
 npm test
 ```
+
+---
+
+For detailed feature docs, see `lipid_viewer/README.md`.
 
 ## Contributing
 

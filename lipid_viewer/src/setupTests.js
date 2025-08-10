@@ -35,7 +35,7 @@ const mockCanvasToDataURL = jest.fn(() =>
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 )
 
-const mockCanvasGetContext = jest.fn(() => ({}))
+const mockCanvasGetContext = jest.fn(() => ({ fillRect: jest.fn(), drawImage: jest.fn(), fillStyle: '' }))
 
 // Mock HTMLCanvasElement constructor
 global.HTMLCanvasElement = class HTMLCanvasElement extends global.HTMLCanvasElement {
@@ -86,65 +86,65 @@ Object.defineProperty(window, 'initRDKitModule', {
     get_mol: jest.fn((smiles) => {
       // Return null for invalid SMILES patterns
       const invalidPatterns = ['invalid', '((', '))', '[[[', 'xyz', 'invalid123', '~~~']
-      if (invalidPatterns.some(pattern => smiles.includes(pattern))) {
+      if (!smiles || invalidPatterns.some(pattern => String(smiles).includes(pattern))) {
         return null
       }
       // Return mock molecule object for valid SMILES
       return {
-        get_svg: jest.fn().mockReturnValue('<svg><circle r="10"/></svg>'),
-        get_molblock: jest.fn().mockReturnValue('mock molblock'),
+        is_valid: jest.fn(() => true),
+        get_svg: jest.fn().mockReturnValue('<svg viewBox="0 0 800 600"><circle r="10"/></svg>'),
+        get_molblock: jest.fn().mockReturnValue('     RDKit          2D\n\n 14 15  0  0  0  0  0  0  0  0999 V2000\n'),
         get_json: jest.fn().mockReturnValue('{"atoms":[]}'),
+        addHs: jest.fn(),
+        generate_aligned_coords: jest.fn(),
+        get_new_coords: jest.fn(() => 'coords'),
         delete: jest.fn()
       }
     }),
-    get_smiles: jest.fn(),
-    get_json: jest.fn(),
-    get_svg: jest.fn(),
   }))
 })
 
-// Mock for 3Dmol
-jest.mock('3dmol', () => ({
+// Provide global shims for external libraries to avoid module resolution issues
+// 3Dmol.js
+window.$3Dmol = {
+  rasmolElementColors: {},
   createViewer: jest.fn(() => ({
     setBackgroundColor: jest.fn(),
     addModel: jest.fn(),
     setStyle: jest.fn(),
     zoomTo: jest.fn(),
+    center: jest.fn(),
+    rotate: jest.fn(),
     render: jest.fn(),
     resize: jest.fn(),
+    clear: jest.fn(),
+    getModel: jest.fn(() => ({ selectedAtoms: jest.fn(() => new Array(10)) }))
   }))
-}))
+}
 
-// Mock for smiles-drawer
-jest.mock('smiles-drawer', () => ({
-  default: {
-    parse: jest.fn(() => Promise.resolve({
-      draw: jest.fn()
-    }))
-  }
-}))
+// SmilesDrawer
+window.SmilesDrawer = {
+  Drawer: function() { this.draw = jest.fn() },
+  parse: (smiles, callback) => callback && callback({})
+}
 
-// Mock for kekule  
-jest.mock('kekule', () => ({
+// Kekule
+window.Kekule = {
   ChemWidget: {
-    SmilesParser: jest.fn(() => ({
-      parse: jest.fn(() => ({ success: true }))
-    }))
+    SmilesParser: function() { this.parse = jest.fn(() => ({ success: true })) }
   }
-}))
+}
 
-// Mock for ngl
-jest.mock('ngl', () => ({
+// NGL
+window.NGL = {
   Stage: jest.fn(() => ({
-    loadFile: jest.fn(() => Promise.resolve({
-      addRepresentation: jest.fn()
-    })),
+    loadFile: jest.fn(() => Promise.resolve({ addRepresentation: jest.fn() })),
     dispose: jest.fn()
   }))
-}))
+}
 
-// Mock for molstar - simplified
-global.molstar = {
+// Mol* (molstar)
+window.molstar = {
   createPlugin: jest.fn(() => Promise.resolve({
     clear: jest.fn(),
     dispose: jest.fn()

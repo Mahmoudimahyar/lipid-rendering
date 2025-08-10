@@ -88,7 +88,7 @@ const initRDKit = async () => {
  * @returns {Promise<boolean>} - True if valid, false otherwise
  */
 export const validateSMILES = async (smiles) => {
-  if (!smiles || typeof smiles !== 'string') {
+  if (typeof smiles !== 'string') {
     return { isValid: false, error: 'Invalid input: SMILES must be a non-empty string' }
   }
 
@@ -167,7 +167,7 @@ export const isValidSMILES = (smiles) => {
   }
   
   // Check for valid atom symbols (basic check)
-  const invalidAtomPattern = /[^A-Za-z0-9()[\]=#@+-:/.\\]/
+  const invalidAtomPattern = /[^A-Za-z0-9()[\]=#@+-:\/.\\]/
   if (invalidAtomPattern.test(trimmedSmiles)) {
     return false
   }

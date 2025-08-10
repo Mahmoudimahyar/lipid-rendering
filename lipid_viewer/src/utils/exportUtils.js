@@ -6,8 +6,9 @@
  * @returns {string} - Safe filename
  */
 export const generateFilename = (smiles, extension, includeTimestamp = false) => {
-  // Sanitize SMILES for filename (keep basic structure)
-  let safeName = smiles.replace(/[<>:"/\\|?*]/g, '_')
+  // Sanitize: allow alphanumerics, dot, underscore, hyphen; replace others with underscore
+  const base = typeof smiles === 'string' ? smiles : ''
+  let safeName = base.replace(/[^A-Za-z0-9._-]/g, '_')
   
   if (includeTimestamp) {
     const timestamp = Date.now()
@@ -23,28 +24,41 @@ export const generateFilename = (smiles, extension, includeTimestamp = false) =>
  * @param {string} filename - The filename
  */
 export const downloadFile = (blob, filename) => {
-  const url = URL.createObjectURL(blob)
+  let url = ''
+  try {
+    if (typeof URL.createObjectURL === 'function') {
+      url = URL.createObjectURL(blob)
+    }
+  } catch {
+    url = ''
+  }
+
   const link = document.createElement('a')
-  
-  link.href = url
-  link.download = filename
+  link.href = url || '#'
+  link.download = filename || ''
   link.style.display = 'none'
   
   document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
+  try {
+    link.click()
+  } finally {
+    document.body.removeChild(link)
+  }
   
-  // Clean up the blob URL
-  setTimeout(() => URL.revokeObjectURL(url), 100)
+  // Clean up the blob URL if available
+  if (url && typeof URL.revokeObjectURL === 'function') {
+    setTimeout(() => URL.revokeObjectURL(url), 100)
+  }
 }
 
 /**
  * Export canvas content to PNG
  * @param {HTMLCanvasElement} canvas - The canvas element
  * @param {string} smiles - The SMILES string for filename
+ * @param {number} [quality] - Optional image quality (0-1)
  * @returns {Promise<boolean>} - Success status
  */
-export const exportToPNG = async (canvas, smiles) => {
+export const exportToPNG = async (canvas, smiles, quality) => {
   if (!canvas || typeof canvas.toBlob !== 'function') {
     return false
   }
@@ -59,7 +73,7 @@ export const exportToPNG = async (canvas, smiles) => {
         } else {
           resolve(false)
         }
-      }, 'image/png')
+      }, 'image/png', quality)
     })
   } catch (error) {
     console.error('PNG export error:', error)
@@ -68,27 +82,31 @@ export const exportToPNG = async (canvas, smiles) => {
 }
 
 /**
- * Export SVG element to SVG file
- * @param {SVGElement} svgElement - The SVG element
+ * Export SVG element or string to SVG file
+ * @param {SVGElement|string} svgInput - The SVG element or SVG string
  * @param {string} smiles - The SMILES string for filename
  * @returns {Promise<boolean>} - Success status
  */
-export const exportToSVG = async (svgElement, smiles) => {
-  if (!svgElement) {
+export const exportToSVG = async (svgInput, smiles) => {
+  if (!svgInput) {
     return false
   }
   
   try {
-    const serializer = new XMLSerializer()
-    const svgString = serializer.serializeToString(svgElement)
+    let svgString
+    if (typeof svgInput === 'string') {
+      svgString = svgInput
+    } else {
+      const serializer = new XMLSerializer()
+      svgString = serializer.serializeToString(svgInput)
+    }
     
     // Add XML declaration and DOCTYPE for proper SVG file
-    const fullSvgString = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
-${svgString}`
+    const fullSvgString = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n${svgString}`
     
     const blob = new Blob([fullSvgString], { type: 'image/svg+xml' })
-    const filename = generateFilename(smiles, 'svg', true)
+    // Use a stable filename (no timestamp) for SVG to ease testing and UX
+    const filename = generateFilename(smiles, 'svg', false)
     
     downloadFile(blob, filename)
     return true
@@ -131,16 +149,21 @@ export const exportToGLB = async (scene, smiles) => {
     }
     
     return new Promise((resolve) => {
-      scene.export((arrayBuffer) => {
-        if (arrayBuffer) {
-          const blob = new Blob([arrayBuffer], { type: 'model/gltf-binary' })
-          const filename = generateFilename(smiles, 'glb', true)
-          downloadFile(blob, filename)
-          resolve(true)
-        } else {
-          resolve(false)
-        }
-      })
+      try {
+        scene.export((arrayBuffer) => {
+          if (arrayBuffer) {
+            const blob = new Blob([arrayBuffer], { type: 'model/gltf-binary' })
+            const filename = generateFilename(smiles, 'glb', true)
+            downloadFile(blob, filename)
+            resolve(true)
+          } else {
+            resolve(false)
+          }
+        })
+      } catch (e) {
+        console.error('GLB export error:', e)
+        resolve(false)
+      }
     })
   } catch (error) {
     console.error('GLB export error:', error)

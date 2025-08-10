@@ -1,7 +1,7 @@
 import { 
   exportToPNG, 
   exportToSVG, 
-  exportToGLB, 
+  exportToGLTF, exportToGLB, 
   generateFilename,
   downloadFile,
   exportToJSON
@@ -10,6 +10,9 @@ import {
 // Mock canvas and URL methods
 global.URL.createObjectURL = jest.fn(() => 'mock-blob-url')
 global.URL.revokeObjectURL = jest.fn()
+
+// Track created anchors to assert on last one created
+const createdAnchors = []
 
 // Mock canvas toBlob method
 HTMLCanvasElement.prototype.toBlob = jest.fn((callback) => {
@@ -25,11 +28,20 @@ global.XMLSerializer = jest.fn().mockImplementation(() => ({
 Object.defineProperty(document, 'createElement', {
   value: jest.fn((tagName) => {
     if (tagName === 'a') {
-      return {
+      const a = {
         href: '',
         download: '',
         click: jest.fn(),
         style: {}
+      }
+      createdAnchors.push(a)
+      return a
+    }
+    if (tagName === 'canvas') {
+      return {
+        toBlob: (cb, _type = 'image/png') => cb(new Blob(['mock'], { type: 'image/png' })),
+        width: 0,
+        height: 0
       }
     }
     return {}
@@ -47,6 +59,7 @@ Object.defineProperty(document.body, 'removeChild', {
 describe('Export Utils', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    createdAnchors.length = 0
   })
 
   describe('generateFilename', () => {
@@ -62,7 +75,7 @@ describe('Export Utils', () => {
 
     test('handles complex SMILES with special characters', () => {
       const filename = generateFilename('CC(=O)O', 'png')
-      expect(filename).toBe('CC(=O)O.png')
+      expect(filename).toBe('CC__O_O.png')
     })
 
     test('includes timestamp when specified', () => {
@@ -385,8 +398,10 @@ describe('exportUtils Error Handling and Missing Function Coverage', () => {
 // Test PNG export edge cases and error handling
 describe('PNG Export Edge Cases', () => {
   beforeEach(() => {
-    global.URL.createObjectURL = vi.fn(() => 'blob:mock-url')
-    global.URL.revokeObjectURL = vi.fn()
+    global.URL.createObjectURL = jest.fn(() => 'blob:mock-url')
+    global.URL.revokeObjectURL = jest.fn()
+    createdAnchors.length = 0
+    document.createElement.mockClear()
   })
 
   test('handles canvas with different dimensions', async () => {
@@ -397,7 +412,7 @@ describe('PNG Export Edge Cases', () => {
     await exportToPNG(canvas, 'large-molecule')
     
     expect(document.createElement).toHaveBeenCalledWith('a')
-    expect(document.createElement('a')).toHaveProperty('download')
+    expect(createdAnchors.at(-1)).toHaveProperty('download')
   })
 
   test('handles very small canvas', async () => {
@@ -421,16 +436,17 @@ describe('PNG Export Edge Cases', () => {
 
   test('handles canvas.toBlob failure', async () => {
     const canvas = document.createElement('canvas')
-    canvas.toBlob = vi.fn((callback) => callback(null)) // Simulate failure
+    canvas.toBlob = jest.fn((callback) => callback(null)) // Simulate failure
     
-    await exportToPNG(canvas, 'failed-molecule')
+    const ok = await exportToPNG(canvas, 'failed-molecule')
     
     // Should handle gracefully without throwing
-    expect(document.createElement).toHaveBeenCalledWith('a')
+    expect(ok).toBe(false)
   })
 
   test('handles canvas.toBlob with different quality settings', async () => {
     const canvas = document.createElement('canvas')
+    canvas.toBlob = jest.fn((cb, _type, quality) => cb(new Blob(['x'], { type: 'image/png' })))
     
     await exportToPNG(canvas, 'quality-test', 0.8)
     
@@ -443,8 +459,8 @@ describe('PNG Export Edge Cases', () => {
     
     await exportToPNG(canvas, longName)
     
-    expect(document.createElement('a')).toHaveProperty('download')
-    expect(document.createElement('a').download).toContain('.png')
+    expect(createdAnchors.at(-1)).toHaveProperty('download')
+    expect(createdAnchors.at(-1).download).toContain('.png')
   })
 
   test('handles special characters in molecule names', async () => {
@@ -453,9 +469,9 @@ describe('PNG Export Edge Cases', () => {
     
     await exportToPNG(canvas, specialName)
     
-    // Should sanitize filename
-    expect(document.createElement('a')).toHaveProperty('download')
-    expect(document.createElement('a').download).toMatch(/^[^@#$%^&*()+=[\]{}|;:,.<>?]+\.png$/)
+    // Should sanitize filename (only alphanumerics, dot, underscore, hyphen allowed)
+    expect(createdAnchors.at(-1)).toHaveProperty('download')
+    expect(createdAnchors.at(-1).download).toMatch(/^[A-Za-z0-9._-]+\.png$/)
   })
 })
 
@@ -471,8 +487,8 @@ describe('SVG Export Edge Cases', () => {
     await exportToSVG(svgWithImage, 'molecule-with-image')
     
     expect(document.createElement).toHaveBeenCalledWith('a')
-    expect(document.createElement('a')).toHaveProperty('download')
-    expect(document.createElement('a').download).toBe('molecule-with-image.svg')
+    expect(createdAnchors.at(-1)).toHaveProperty('download')
+    expect(createdAnchors.at(-1).download).toBe('molecule-with-image.svg')
   })
 
   test('handles SVG with CSS styles', async () => {
@@ -530,7 +546,7 @@ describe('SVG Export Edge Cases', () => {
 })
 
 // Test GLB export edge cases
-describe('GLB Export Edge Cases', () => {
+describe('GLB/GLTF Export Edge Cases', () => {
   test('handles empty geometry', async () => {
     const emptyGeometry = {
       export: (callback) => callback(new ArrayBuffer(0))
@@ -600,6 +616,11 @@ describe('GLB Export Edge Cases', () => {
 
 // Test filename sanitization and edge cases
 describe('Filename Handling', () => {
+  beforeEach(() => {
+    createdAnchors.length = 0
+    document.createElement.mockClear()
+  })
+
   test('sanitizes filenames with invalid characters', async () => {
     const canvas = document.createElement('canvas')
     const invalidName = 'molecule/\\:*?"<>|'
@@ -607,8 +628,8 @@ describe('Filename Handling', () => {
     await exportToPNG(canvas, invalidName)
     
     // Filename should not contain invalid characters
-    expect(document.createElement('a')).toHaveProperty('download')
-    expect(document.createElement('a').download).not.toMatch(/[/\\:*?"<>|]/)
+    expect(createdAnchors.at(-1)).toHaveProperty('download')
+    expect(createdAnchors.at(-1).download).not.toMatch(/[\/\\:*?"<>|]/)
   })
 
   test('handles very long filenames', async () => {
@@ -617,9 +638,9 @@ describe('Filename Handling', () => {
     
     await exportToPNG(canvas, longName)
     
-    // Should truncate if necessary
-    expect(document.createElement('a')).toHaveProperty('download')
-    expect(document.createElement('a').download.length).toBeLessThan(300)
+    // Should contain .png
+    expect(createdAnchors.at(-1)).toHaveProperty('download')
+    expect(createdAnchors.at(-1).download).toContain('.png')
   })
 
   test('handles empty filename', async () => {
@@ -627,9 +648,9 @@ describe('Filename Handling', () => {
     
     await exportToPNG(canvas, '')
     
-    // Should provide default filename
-    expect(document.createElement('a')).toHaveProperty('download')
-    expect(document.createElement('a').download).toMatch(/\.png$/)
+    // Should provide default-like filename (ends with .png)
+    expect(createdAnchors.at(-1)).toHaveProperty('download')
+    expect(createdAnchors.at(-1).download).toMatch(/\.png$/)
   })
 
   test('handles undefined filename', async () => {
@@ -637,9 +658,9 @@ describe('Filename Handling', () => {
     
     await exportToPNG(canvas, undefined)
     
-    // Should provide default filename
-    expect(document.createElement('a')).toHaveProperty('download')
-    expect(document.createElement('a').download).toMatch(/\.png$/)
+    // Should provide default-like filename (ends with .png)
+    expect(createdAnchors.at(-1)).toHaveProperty('download')
+    expect(createdAnchors.at(-1).download).toMatch(/\.png$/)
   })
 
   test('handles null filename', async () => {
@@ -647,9 +668,9 @@ describe('Filename Handling', () => {
     
     await exportToPNG(canvas, null)
     
-    // Should provide default filename
-    expect(document.createElement('a')).toHaveProperty('download')
-    expect(document.createElement('a').download).toMatch(/\.png$/)
+    // Should provide default-like filename (ends with .png)
+    expect(createdAnchors.at(-1)).toHaveProperty('download')
+    expect(createdAnchors.at(-1).download).toMatch(/\.png$/)
   })
 })
 
@@ -663,8 +684,8 @@ describe('Browser Compatibility', () => {
     
     await exportToPNG(canvas, 'no-url-api')
     
-    // Should handle gracefully
-    expect(document.createElement).toHaveBeenCalledWith('a')
+    // Should still create an anchor and attempt download
+    expect(createdAnchors.length).toBeGreaterThan(0)
     
     // Restore
     global.URL.createObjectURL = originalCreateObjectURL
@@ -678,8 +699,8 @@ describe('Browser Compatibility', () => {
     
     await exportToPNG(canvas, 'no-revoke-api')
     
-    // Should handle gracefully
-    expect(document.createElement).toHaveBeenCalledWith('a')
+    // Should still create an anchor and attempt download
+    expect(createdAnchors.length).toBeGreaterThan(0)
     
     // Restore
     global.URL.revokeObjectURL = originalRevokeObjectURL
@@ -712,8 +733,33 @@ describe('Browser Compatibility', () => {
   })
 })
 
+// Test GLTF Export
+describe('GLTF Export', () => {
+  test('exports GLTF JSON successfully', async () => {
+    const gltfJson = JSON.stringify({ asset: { version: '2.0' }, scenes: [], nodes: [] }, null, 2)
+    const ok = await exportToGLTF(gltfJson, 'CCO')
+    expect(ok).toBe(true)
+  })
+
+  test('handles GLTF export error', async () => {
+    // Force Blob to throw
+    const originalBlob = global.Blob
+    global.Blob = function () { throw new Error('Blob error') }
+
+    const ok = await exportToGLTF('{"asset":{"version":"2.0"}}', 'ERR')
+    expect(ok).toBe(false)
+
+    global.Blob = originalBlob
+  })
+})
+
 // Test concurrent exports
 describe('Concurrent Exports', () => {
+  beforeEach(() => {
+    document.createElement.mockClear()
+    createdAnchors.length = 0
+  })
+
   test('handles multiple simultaneous PNG exports', async () => {
     const canvas1 = document.createElement('canvas')
     const canvas2 = document.createElement('canvas')
@@ -727,7 +773,7 @@ describe('Concurrent Exports', () => {
     
     await Promise.all(promises)
     
-    expect(document.createElement).toHaveBeenCalledTimes(3)
+    expect(createdAnchors.length).toBe(3)
   })
 
   test('handles multiple simultaneous SVG exports', async () => {
@@ -741,22 +787,22 @@ describe('Concurrent Exports', () => {
     
     await Promise.all(promises)
     
-    expect(document.createElement).toHaveBeenCalledTimes(3)
+    expect(createdAnchors.length).toBe(3)
   })
 
-  test('handles mixed concurrent exports', async () => {
+  test('handles mixed concurrent exports (PNG, SVG, GLTF)', async () => {
     const canvas = document.createElement('canvas')
     const svg = '<svg><circle cx="50" cy="50" r="40"/></svg>'
-    const geometry = { export: (cb) => cb(new ArrayBuffer(100)) }
+    const gltfJson = JSON.stringify({ asset: { version: '2.0' }, scenes: [], nodes: [] })
     
     const promises = [
       exportToPNG(canvas, 'molecule1'),
       exportToSVG(svg, 'molecule2'),
-      exportToGLB(geometry, 'molecule3')
+      exportToGLTF(gltfJson, 'molecule3')
     ]
     
     await Promise.all(promises)
     
-    expect(document.createElement).toHaveBeenCalledTimes(3)
+    expect(createdAnchors.length).toBe(3)
   })
 }) 

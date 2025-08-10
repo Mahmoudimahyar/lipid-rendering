@@ -1,0 +1,198 @@
+---
+description: Django+AWS project — continuous tests and docs; adds a Checkup command and test-loop after each edit.
+globs: ["**/*.py", "pyproject.toml", "pytest.ini", "manage.py", "requirements*.txt", "README.md", "docs/**/*.md"]
+alwaysApply: true
+---
+
+# Rule: Django + AWS — Continuous Testing & Documentation
+
+You are the Cursor Agent working on a Python/Django codebase that uses AWS (boto3). Your priorities are:
+1) keep the test suite green after each iteration, 2) immediately add/extend tests for new/changed behavior, and 3) write clear Markdown documentation for new features after significant iterations.
+
+Follow the steps, conventions, and guardrails below unless I explicitly say otherwise.
+
+---
+
+## 0) Stack assumptions & tooling
+- Test runner: **pytest** with **pytest-django**; coverage via **coverage.py** (invoked through pytest `--cov`). 
+- AWS calls: must be **mocked** with **moto** (or `botocore.stub` if needed). Never hit real AWS when running unit tests.
+- Recommended dev deps (install if missing): `pytest pytest-django coverage factory_boy freezegun moto boto3`.
+- Test locations: prefer `app_name/tests/` (or `tests/` at repo root) with file names like `test_<unit>.py`.
+- Django DB access in tests uses `@pytest.mark.django_db` or the `db` fixture.
+
+If any of the above are missing, ask permission to scaffold them (see §7).
+
+---
+
+## 1) Golden loop after each change (Continuous Testing)
+**Every time you generate or edit code in this project, do this loop unless I say “skip tests”:**
+
+1. **Preflight & sanity:**
+   - Ensure dependencies available; if not, propose the exact `pip install` command.
+   - Detect `pytest.ini`/`pyproject.toml`; if absent, propose minimal config.
+
+2. **Run fast tests:**
+   - Command: `pytest -q --maxfail=1 --disable-warnings`
+   - If failures: 
+     - Parse the failure(s), propose the *minimal* fix.
+     - Apply the fix, re-run the same command.
+     - Repeat until green or I say stop. Ask before any large refactor or file deletion.
+
+3. **Write/extend tests for changed behavior:**
+   - Determine changed files via `git status --porcelain` or `git diff --name-only`.
+   - For each changed function/view/model/serializer/task:
+     - Add/extend **unit tests** covering: happy path, one edge case, and one failure path.
+     - If DB used: mark with `@pytest.mark.django_db`.
+     - If AWS used: wrap test in `with moto.mock_aws():` (or specific service decorators).
+     - Prefer `factory_boy` factories for model creation; avoid hard-coded IDs.
+     - Use Django `client` or `APIClient` (if DRF) for view tests; assert status codes and payloads.
+
+   - Run tests again with coverage:
+     - `pytest -q --maxfail=1 --disable-warnings --cov --cov-report=term-missing`
+     - If new tests fail, fix code or tests (smallest change that makes intent correct), re-run.
+
+4. **Done criteria for a change:**
+   - All tests pass.
+   - New/changed behavior is covered by unit tests (visible diff in `tests/`).
+   - If the change is “significant,” queue documentation (see §3) or proceed directly if I say “docs now”.
+
+---
+
+## 2) Commands you should respond to
+
+- **“ct on”** — Start the continuous test loop after each edit until I say **“ct off”**.
+- **“ct once”** — Run §1 exactly once now.
+- **“write tests for <path|symbol>”** — Generate or extend tests for named file/symbol, then run pytest.
+- **“docs for <feature|path>”** — Ask clarifying questions (if needed), then write Markdown docs per §3 and place them under `docs/features/`.
+- **“Codebase Documentation and Test Checkup”** — Run the full procedure in §4.
+
+If a command would be destructive (e.g., deleting tests), ask first.
+
+---
+
+## 3) Continuous Documentation (after each significant iteration)
+When I say “docs now” or you finish a significant feature/refactor:
+
+1. Ask 2–5 clarifying questions if needed:
+   - Intended users/roles? External APIs? Key invariants? Edge cases? Configuration & secrets?
+2. Create or update:
+   - `docs/features/<slug>.md` — feature-level explanation using the template below.
+   - Add mermaid diagrams when architecture or flows benefit from visuals.
+   - If architecture changed materially, update `docs/architecture.md`.
+3. Validate links and code snippets compile or reflect actual paths.
+4. Keep docs concise but **actionable**: a reader should be able to use/extend the feature without reading the code.
+
+**Feature doc template (use/adapt):**
+```md
+# <Feature Name>
+
+**Purpose**: What this feature solves and for whom.  
+**Entry points**: URLs, CLI, management commands, cron/schedulers, signals.  
+**Key flows**: (mermaid sequence/flowchart if helpful)  
+**Public API**: functions/classes, request/response shapes, validation rules.  
+**Data model**: models/fields, important constraints, migrations impacting it.  
+**AWS interactions**: services used (mocked in tests with moto), env vars.  
+**Configuration**: settings flags, feature switches, required env vars.  
+**Operational notes**: idempotency, retries, timeouts, logging/metrics.  
+**Test coverage**: what’s tested; links to `tests/...` files.  
+**Known limits & TODOs**: follow-ups, tech debt, future scenarios.
+4) “Codebase Documentation & Test Checkup” (on demand)
+When I say this phrase, perform:
+
+Inventory
+
+List test files found (e.g., tests/**, */tests/**, files matching test_*.py).
+
+Detect pytest/django config (pytest.ini, pyproject.toml, conftest.py).
+
+Detect docs (docs/**/*.md, README.md, app READMEs).
+
+Run coverage
+
+If coverage available: pytest --cov --cov-report=term-missing -q.
+
+Summarize % coverage by package and top N files with lowest coverage.
+
+Gap analysis
+
+Modules with no tests; functions/classes with obvious branches untested.
+
+Features without docs/features/*.md or with stale references.
+
+Questions
+
+Ask clarifying questions about ambiguous APIs or business rules.
+
+Plan & execute
+
+With my approval: write missing tests first, get green; then write/update docs using §3.
+
+Output a short Markdown report docs/_reports/checkup-<YYYYMMDD-HHMM>.md.
+
+5) Test-writing conventions (Django + AWS)
+Django DB: mark tests needing DB with @pytest.mark.django_db; prefer transactions managed by pytest.
+
+Factories: use factory_boy to create realistic objects; avoid fixtures that create global state.
+
+Views/API: use client (or DRF APIClient), assert status code, response body, and important side‑effects.
+
+AWS: never call real AWS in unit tests.
+
+Wrap in with moto.mock_aws(): or service-specific decorators (@moto.mock_s3).
+
+Create buckets/queues/topics inside the test setup.
+
+Ensure mocks are created before any boto3 client/resource is instantiated.
+
+Time & randomness: freeze time with freezegun and seed random as needed.
+
+Naming: test_<unit>_<behavior>_<expected>.py::test_<scenario>().
+
+6) Guardrails & safety
+Never commit or echo secrets. Use env vars and .env.example. Do not write real AWS ARNs/keys in tests or docs.
+
+Ask before:
+
+Large refactors or deprecated API removals.
+
+Regenerating many files or reformatting the entire repo.
+
+Keep diffs minimal and explain your reasoning when changes are non-trivial.
+
+7) Scaffolding if missing (ask first, then create)
+pytest.ini (or add to pyproject.toml):
+
+ini
+Copy
+[pytest]
+DJANGO_SETTINGS_MODULE = <your_project>.settings
+python_files = tests.py test_*.py *_tests.py
+addopts = -ra
+requirements-dev.txt (or dev extra in pyproject.toml):
+
+nginx
+Copy
+pytest
+pytest-django
+coverage
+factory_boy
+freezegun
+moto
+boto3
+Minimal folder structure:
+
+Copy
+tests/
+docs/
+  architecture.md
+  features/
+8) Helpful one-liners (use when appropriate)
+Quick test run: pytest -q --maxfail=1 --disable-warnings
+
+With coverage: pytest -q --maxfail=1 --disable-warnings --cov --cov-report=term-missing
+
+Focus on changed files: pytest -q $(git diff --name-only --diff-filter=ACMRTUXB | grep -E '\.py$' | tr '\n' ' ')
+
+Clean cache: pytest --cache-clear
+
+(If a command is shell-specific, adapt to the user’s OS.)

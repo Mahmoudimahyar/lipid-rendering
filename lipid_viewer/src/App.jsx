@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Toaster, toast } from 'react-hot-toast'
+import { Link } from 'react-router-dom'
 import SMILESInput from './components/SMILESInput'
 import RendererSelector from './components/RendererSelector'
 import MoleculeViewer from './components/MoleculeViewer'
@@ -234,6 +235,7 @@ function App() {
               <div className="text-sm text-gray-500">
                 Renderer: <span className="font-semibold">{renderer}</span>
               </div>
+              <Link to="/dock" className="ml-4 inline-flex items-center px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 text-sm">Docking</Link>
             </div>
           </div>
         </div>

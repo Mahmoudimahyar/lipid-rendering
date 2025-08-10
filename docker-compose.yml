@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=False
+      - DJANGO_SETTINGS_MODULE=core.settings
+    volumes:
+      # Mount for development (comment out for production)
+      - ./server:/app
+      - ./lipid_viewer/dist:/app/staticfiles/frontend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/healthz', timeout=10)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Development variant with live reload
+  app-dev:
+    build:
+      context: .
+      dockerfile: server/Dockerfile.dev
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=True
+      - DJANGO_SETTINGS_MODULE=core.settings
+    volumes:
+      - ./server:/app
+      - ./lipid_viewer/dist:/app/staticfiles/frontend
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+    restart: unless-stopped
+    profiles:
+      - dev
+
+networks:
+  default:
+    name: lipid-docking-network

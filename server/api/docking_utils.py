@@ -2,15 +2,40 @@ import json
 import time
 import random
 import math
+import logging
 from typing import Dict, List, Any
 from .chem_utils import ChemUtils
 
+# Import real implementations
+try:
+    from .real_docking_engine import RealDockingUtils
+    REAL_DOCKING_AVAILABLE = True
+except ImportError:
+    REAL_DOCKING_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
+
 class DockingEngine:
-    """Mock implementation of molecular docking engine"""
+    """Molecular docking engine with real and mock implementations"""
+    
+    @staticmethod
+    def is_real_docking_available() -> bool:
+        """Check if real docking software is available"""
+        return REAL_DOCKING_AVAILABLE
     
     @staticmethod
     def validate_docking_parameters(params: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate docking parameters and return validated dict"""
+        """Validate docking parameters using real or mock implementation"""
+        if REAL_DOCKING_AVAILABLE:
+            logger.info("Using real docking parameter validation")
+            return RealDockingUtils.validate_docking_parameters(params)
+        else:
+            logger.warning("Real docking not available, using mock validation")
+            return DockingEngine._validate_docking_parameters_mock(params)
+    
+    @staticmethod
+    def _validate_docking_parameters_mock(params: Dict[str, Any]) -> Dict[str, Any]:
+        """Mock validation for fallback"""
         validated = {}
         
         # Required parameters
@@ -54,6 +79,18 @@ class DockingEngine:
         validated['num_modes'] = max(1, min(20, int(params.get('num_modes', 9))))
         
         return validated
+    
+    @staticmethod
+    def run_production_docking(validated_params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Run production docking using real or mock implementation
+        """
+        if REAL_DOCKING_AVAILABLE:
+            logger.info("Running real AutoDock Vina docking")
+            return RealDockingUtils.run_production_docking(validated_params)
+        else:
+            logger.warning("Real docking not available, using mock implementation")
+            return DockingEngine.run_mock_docking(validated_params)
     
     @staticmethod
     def prepare_docking_inputs(ligand_smiles: str, receptor_pdb_id: str) -> Dict[str, Any]:

@@ -9,9 +9,20 @@ import math
 import subprocess
 import tempfile
 import os
+import logging
 from typing import Dict, List, Any, Optional, Tuple
 from django.conf import settings
 from .models import BindingPocket, JobTemplate
+
+# Import real implementations
+try:
+    from .real_gnina_scorer import GNINAScorer as RealGNINAScorer
+    from .real_pocket_detection import PocketDetector as RealPocketDetector
+    REAL_ADVANCED_AVAILABLE = True
+except ImportError:
+    REAL_ADVANCED_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
 
 
 class GNINAScorer:
@@ -20,8 +31,19 @@ class GNINAScorer:
     @staticmethod
     def rescore_poses(poses: List[Dict], ligand_sdf: str, receptor_pdbqt: str) -> List[Dict]:
         """
-        Rescore docking poses using GNINA neural network scoring
-        This is a mock implementation - real version would call GNINA
+        Rescore docking poses using real or mock GNINA implementation
+        """
+        if REAL_ADVANCED_AVAILABLE:
+            logger.info("Using real GNINA rescoring")
+            return RealGNINAScorer.rescore_poses(poses, ligand_sdf, receptor_pdbqt)
+        else:
+            logger.warning("Real GNINA not available, using mock implementation")
+            return GNINAScorer._rescore_poses_mock(poses, ligand_sdf, receptor_pdbqt)
+    
+    @staticmethod
+    def _rescore_poses_mock(poses: List[Dict], ligand_sdf: str, receptor_pdbqt: str) -> List[Dict]:
+        """
+        Mock GNINA rescoring for fallback
         """
         rescored_poses = []
         
@@ -113,8 +135,19 @@ class PocketDetector:
     @staticmethod
     def detect_pockets(pdb_id: str, pdb_content: str) -> List[Dict]:
         """
-        Detect binding pockets in a protein structure
-        This is a mock implementation - real version would use fpocket, CASTp, etc.
+        Detect binding pockets using real or mock implementation
+        """
+        if REAL_ADVANCED_AVAILABLE:
+            logger.info("Using real pocket detection")
+            return RealPocketDetector.detect_pockets(pdb_id, pdb_content)
+        else:
+            logger.warning("Real pocket detection not available, using mock implementation")
+            return PocketDetector._detect_pockets_mock(pdb_id, pdb_content)
+    
+    @staticmethod
+    def _detect_pockets_mock(pdb_id: str, pdb_content: str) -> List[Dict]:
+        """
+        Mock pocket detection for fallback
         """
         # Mock pocket detection - in reality this would:
         # 1. Write PDB to temporary file

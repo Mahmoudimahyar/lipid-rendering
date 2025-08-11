@@ -278,8 +278,8 @@ def _run_docking_task(job_id):
             job.receptor_pdb_id
         )
         
-        # Run docking calculation
-        results = DockingEngine.run_mock_docking(validated_params)
+        # Run docking calculation (real or mock)
+        results = DockingEngine.run_production_docking(validated_params)
         
         # Update job with results
         job.status = 'completed'

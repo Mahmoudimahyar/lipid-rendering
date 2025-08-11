@@ -9,6 +9,28 @@ requests==2.31.0
 # Production server
 gunicorn==23.0.0
 
+# Scientific Computing & Cheminformatics
+rdkit==2023.9.5
+numpy==1.24.3
+scipy==1.11.1
+pandas==2.0.3
+openmm==8.0.0
+mdtraj==1.9.9
+
+# AutoDock Vina Python binding
+vina==1.2.5
+
+# GNINA dependencies
+torch==2.0.1
+torchvision==0.15.2
+
+# Pocket detection utilities
+biopython==1.81
+prody==2.4.1
+
+# Molecular file format handling
+openbabel-wheel==3.1.1.17
+
 # Test
 pytest==8.4.1
 pytest-django==4.11.1

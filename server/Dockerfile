@@ -1,4 +1,4 @@
-# Single-stage build for production-ready single-server deployment
+# Single-stage build for production-ready scientific computing deployment
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -10,10 +10,54 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install system dependencies for scientific packages
+# Install system dependencies for scientific packages and molecular docking
 RUN apt-get update && apt-get install -y \
     build-essential \
+    cmake \
+    git \
+    wget \
+    curl \
+    libboost-all-dev \
+    libopenbabel-dev \
+    openbabel \
+    swig \
+    libeigen3-dev \
+    libcairo2-dev \
+    pkg-config \
+    python3-dev \
+    gcc \
+    g++ \
+    gfortran \
+    libatlas-base-dev \
+    liblapack-dev \
+    libblas-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Install conda for scientific package management
+RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh && \
+    /bin/bash /tmp/miniconda.sh -b -p /opt/conda && \
+    rm /tmp/miniconda.sh
+
+ENV PATH="/opt/conda/bin:$PATH"
+
+# Install scientific computing packages via conda (more reliable for complex dependencies)
+RUN conda install -c conda-forge -c rdkit -y \
+    rdkit \
+    openmm \
+    mdtraj \
+    biopython \
+    scipy \
+    numpy \
+    pandas \
+    pytorch \
+    torchvision \
+    && conda clean -ya
+
+# Install AutoDock Vina for production molecular docking
+RUN conda install -c conda-forge -y autodock-vina && conda clean -ya
+
+# Install additional scientific packages via pip for completeness
+RUN pip install prody openbabel-wheel
 
 # Install Python dependencies
 COPY server/requirements.txt /app/requirements.txt

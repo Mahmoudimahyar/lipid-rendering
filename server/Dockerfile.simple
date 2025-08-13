@@ -1,0 +1,56 @@
+# Simplified Dockerfile for testing and development
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    DJANGO_SETTINGS_MODULE=core.settings_ci \
+    DOCKING_ALLOW_MOCK=True
+
+WORKDIR /app
+
+# Install basic system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements-docker.txt /app/requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+# Copy Django application
+COPY . /app
+
+# Create static files directories
+RUN mkdir -p /app/staticfiles/frontend
+RUN mkdir -p /app/templates
+
+# Copy pre-built React frontend if available
+# Note: This will be handled by docker-compose volume mount
+
+# Collect static files
+RUN python manage.py collectstatic --noinput --settings=core.settings_ci || echo "Static collection failed, continuing..."
+
+# Copy the correct HTML file to templates directory for Django to serve
+RUN cp /app/staticfiles/frontend/index.html /app/templates/index.html || echo "Template copy failed, continuing..."
+
+# Run migrations
+RUN python manage.py migrate --settings=core.settings_ci
+
+# Create non-root user for security
+RUN adduser --disabled-password --gecos '' appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/api/healthz', timeout=10)" || exit 1
+
+# Use Django development server for testing
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000", "--settings=core.settings_ci"]

@@ -1,0 +1,314 @@
+name: Nightly Benchmark Suite
+
+on:
+  schedule:
+    # Run every night at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Allow manual triggering
+    inputs:
+      benchmark_mode:
+        description: 'Benchmark mode'
+        required: false
+        default: 'full'
+        type: choice
+        options:
+        - full
+        - pr
+        - custom
+
+env:
+  FORCE_COLOR: 1
+  PYTHONUNBUFFERED: 1
+  CONDA_ENV_NAME: lipid-rendering-benchmarks
+
+jobs:
+  nightly-benchmarks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # 2 hours for full benchmark suite
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup micromamba
+      uses: mamba-org/setup-micromamba@v1
+      with:
+        micromamba-version: '1.5.8'
+        environment-name: ${{ env.CONDA_ENV_NAME }}
+        create-args: >-
+          python=3.11
+          pip
+        cache-environment: true
+        cache-downloads: true
+        
+    - name: Install scientific dependencies
+      run: |
+        micromamba activate ${{ env.CONDA_ENV_NAME }}
+        micromamba install -c conda-forge -y \
+          rdkit \
+          openbabel \
+          autodock-vina \
+          numpy \
+          scipy \
+          requests \
+          pyyaml
+      shell: bash -el {0}
+      
+    - name: Install Python dependencies
+      run: |
+        micromamba activate ${{ env.CONDA_ENV_NAME }}
+        cd server
+        pip install -r requirements.txt
+        pip install pytest-django coverage
+      shell: bash -el {0}
+      
+    - name: Prepare Django environment
+      run: |
+        micromamba activate ${{ env.CONDA_ENV_NAME }}
+        cd server
+        python manage.py migrate --run-syncdb --settings=core.settings_ci
+      shell: bash -el {0}
+      
+    - name: Start Django server
+      run: |
+        micromamba activate ${{ env.CONDA_ENV_NAME }}
+        cd server
+        DJANGO_SETTINGS_MODULE=core.settings_ci python manage.py runserver 8000 &
+        echo $! > django.pid
+        sleep 15  # Extra time for startup
+        curl -f http://localhost:8000/api/healthz || exit 1
+      shell: bash -el {0}
+      
+    - name: Run full benchmark suite
+      run: |
+        micromamba activate ${{ env.CONDA_ENV_NAME }}
+        cd benchmarks/scripts
+        
+        # Determine benchmark mode
+        MODE="${{ github.event.inputs.benchmark_mode || 'full' }}"
+        echo "Running benchmark mode: $MODE"
+        
+        DJANGO_SETTINGS_MODULE=core.settings_ci python benchmark_runner.py \
+          --mode "$MODE" \
+          --server-url http://localhost:8000
+      shell: bash -el {0}
+      
+    - name: Stop Django server
+      if: always()
+      run: |
+        if [ -f server/django.pid ]; then
+          kill $(cat server/django.pid) || true
+          rm server/django.pid
+        fi
+      shell: bash -el {0}
+      
+    - name: Generate benchmark report
+      if: always()
+      run: |
+        micromamba activate ${{ env.CONDA_ENV_NAME }}
+        cd benchmarks/scripts
+        python -c "
+import json
+import os
+from pathlib import Path
+from datetime import datetime
+
+results_dir = Path('../results')
+latest_file = results_dir / 'benchmark_results_full_latest.json'
+
+if latest_file.exists():
+    with open(latest_file, 'r') as f:
+        results = json.load(f)
+    
+    summary = results.get('summary', {})
+    
+    print('=== NIGHTLY BENCHMARK SUMMARY ===')
+    print(f'Timestamp: {results[\"suite_info\"][\"timestamp\"]}')
+    print(f'Total benchmarks: {summary.get(\"total_benchmarks\", 0)}')
+    print(f'Completed: {summary.get(\"completed\", 0)}')
+    print(f'Failed: {summary.get(\"failed\", 0)}')
+    print(f'Overall success rate: {summary.get(\"overall_success_rate\", 0):.2%}')
+    print(f'RMSD success rate: {summary.get(\"rmsd_success_rate\", 0):.2%}')
+    
+    if summary.get('rmsd_statistics'):
+        rmsd_stats = summary['rmsd_statistics']
+        print(f'RMSD mean: {rmsd_stats.get(\"mean\", 0):.2f} Å')
+        print(f'RMSD range: {rmsd_stats.get(\"min\", 0):.2f} - {rmsd_stats.get(\"max\", 0):.2f} Å')
+    
+    # Check for regressions
+    if summary.get('overall_success_rate', 0) < 0.7:
+        print('WARNING: Overall success rate below 70% - potential regression!')
+        exit(1)
+    
+    print('Nightly benchmarks completed successfully!')
+else:
+    print('No benchmark results found!')
+    exit(1)
+"
+      shell: bash -el {0}
+      
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: nightly-benchmark-results
+        path: |
+          benchmarks/results/benchmark_results_*.json
+          benchmarks/results/benchmark_run_*.log
+          benchmarks/assets/*.pdb
+        retention-days: 90
+        
+    - name: Check for regressions
+      if: always()
+      run: |
+        micromamba activate ${{ env.CONDA_ENV_NAME }}
+        cd benchmarks/scripts
+        python -c "
+import json
+import sys
+from pathlib import Path
+
+results_dir = Path('../results')
+latest_file = results_dir / 'benchmark_results_full_latest.json'
+
+if latest_file.exists():
+    with open(latest_file, 'r') as f:
+        results = json.load(f)
+    
+    summary = results.get('summary', {})
+    
+    # Define regression thresholds
+    min_success_rate = 0.6  # 60% minimum
+    min_rmsd_success = 0.5  # 50% minimum
+    
+    success_rate = summary.get('overall_success_rate', 0)
+    rmsd_success = summary.get('rmsd_success_rate', 0)
+    
+    regressions = []
+    
+    if success_rate < min_success_rate:
+        regressions.append(f'Overall success rate {success_rate:.2%} below threshold {min_success_rate:.2%}')
+    
+    if rmsd_success < min_rmsd_success:
+        regressions.append(f'RMSD success rate {rmsd_success:.2%} below threshold {min_rmsd_success:.2%}')
+    
+    if regressions:
+        print('BENCHMARK REGRESSIONS DETECTED:')
+        for regression in regressions:
+            print(f'  - {regression}')
+        sys.exit(1)
+    else:
+        print('No regressions detected - benchmarks within acceptable ranges')
+else:
+    print('No results to check for regressions')
+    sys.exit(1)
+"
+      shell: bash -el {0}
+      
+    - name: Create issue on regression
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const title = `Nightly Benchmark Regression - ${new Date().toISOString().split('T')[0]}`;
+          const body = `
+          ## Benchmark Regression Detected
+          
+          The nightly benchmark suite has detected a regression in docking performance.
+          
+          **Build Details:**
+          - Commit: ${{ github.sha }}
+          - Workflow: ${{ github.workflow }}
+          - Run: ${{ github.run_number }}
+          
+          **Next Steps:**
+          1. Review the benchmark results in the workflow artifacts
+          2. Check recent changes that might affect docking accuracy
+          3. Investigate specific benchmark failures
+          4. Update benchmarks if intentional changes were made
+          
+          **Artifacts:**
+          - [Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          
+          This issue was automatically created by the nightly benchmark workflow.
+          `;
+          
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: title,
+            body: body,
+            labels: ['regression', 'benchmarks', 'automated']
+          });
+
+  benchmark-comparison:
+    runs-on: ubuntu-latest
+    needs: nightly-benchmarks
+    if: always()
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download current results
+      uses: actions/download-artifact@v4
+      with:
+        name: nightly-benchmark-results
+        path: current-results
+        
+    - name: Download previous results
+      uses: actions/download-artifact@v4
+      with:
+        name: nightly-benchmark-results
+        path: previous-results
+      continue-on-error: true
+      
+    - name: Compare benchmark results
+      run: |
+        echo "=== BENCHMARK COMPARISON ==="
+        
+        if [ -f current-results/benchmark_results_full_latest.json ]; then
+          echo "Current benchmark results found"
+          
+          if [ -f previous-results/benchmark_results_full_latest.json ]; then
+            echo "Previous benchmark results found - comparison would be implemented here"
+            # In a real implementation, you would:
+            # 1. Parse both JSON files
+            # 2. Compare RMSD values, success rates, timing
+            # 3. Generate a comparison report
+            # 4. Flag significant changes
+          else
+            echo "No previous results for comparison"
+          fi
+        else
+          echo "No current results found"
+        fi
+        
+    - name: Generate comparison report
+      run: |
+        cat > benchmark-comparison.md << 'EOF'
+        # Nightly Benchmark Comparison Report
+        
+        **Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        **Commit:** ${{ github.sha }}
+        
+        ## Summary
+        - Benchmark suite execution completed
+        - Results archived for historical comparison
+        - Regression detection performed
+        
+        ## Next Steps
+        - Monitor trending performance over time
+        - Update baselines as needed
+        - Investigate any detected regressions
+        
+        ---
+        *This report was automatically generated by the nightly benchmark workflow.*
+        EOF
+        
+    - name: Upload comparison report
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-comparison-report
+        path: benchmark-comparison.md
+        retention-days: 30

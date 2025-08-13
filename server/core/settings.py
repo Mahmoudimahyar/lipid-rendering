@@ -163,3 +163,8 @@ REST_FRAMEWORK = {
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Docking Configuration - Production Ready
+DOCKING_ALLOW_MOCK = False  # NEVER use mock - only real AutoDock Vina
+DOCKING_FORCE_REAL = True   # Force real docking, fail if AutoDock Vina not available
+DOCKING_CUDA_ENABLED = True  # Enable CUDA acceleration when available

@@ -1,0 +1,24 @@
+services:
+  app-production:
+    build:
+      context: .  # Use root context to access both server/ and lipid_viewer/
+      dockerfile: server/Dockerfile.production  # Use pip-based production Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=True
+      - DJANGO_SETTINGS_MODULE=core.settings  # Use production settings (DOCKING_ALLOW_MOCK=False)
+      - DOCKING_ALLOW_MOCK=False  # Force disable mock, require real AutoDock Vina
+    volumes:
+      - ./lipid_viewer/dist:/app/staticfiles/frontend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/healthz', timeout=10)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s  # Longer startup time for conda installation
+
+networks:
+  default:
+    name: lipid-docking-production-network

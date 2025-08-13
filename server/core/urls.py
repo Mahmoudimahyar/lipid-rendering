@@ -16,11 +16,14 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include, re_path
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.shortcuts import redirect
 from django.views.generic import TemplateView
 from django.conf import settings
 from django.conf.urls.static import static
+from django.views.decorators.cache import never_cache
+from django.utils.decorators import method_decorator
+import os
 
 def api_info_view(request):
     """API endpoint providing API information"""
@@ -49,12 +52,22 @@ def api_info_view(request):
         ]
     })
 
+@method_decorator(never_cache, name='dispatch')
 class ReactAppView(TemplateView):
     """
     Serve React app for all non-API routes.
     This handles React Router client-side routing.
     """
     template_name = 'index.html'
+    
+    def get(self, request, *args, **kwargs):
+        """Serve React app with no-cache headers to prevent stale HTML"""
+        response = super().get(request, *args, **kwargs)
+        # Add cache-busting headers for the main HTML
+        response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response['Pragma'] = 'no-cache'
+        response['Expires'] = '0'
+        return response
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -71,7 +84,7 @@ urlpatterns = [
 # Serve static files (including assets at /assets/ path for React compatibility)
 # These must come BEFORE the catch-all React route
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
-urlpatterns += static('/assets/', document_root=settings.STATIC_ROOT / 'frontend' / 'assets')
+urlpatterns += static('/assets/', document_root=os.path.join(str(settings.STATIC_ROOT), 'frontend', 'assets'))
 
 # React app routes (catch-all for SPA routing)
 # This must be last to catch all non-API/static routes

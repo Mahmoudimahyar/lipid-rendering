@@ -1,0 +1,347 @@
+name: CI Pipeline with Seeded Smoke Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  # Force colored output
+  FORCE_COLOR: 1
+  PYTHONUNBUFFERED: 1
+  # Conda settings
+  CONDA_ENV_NAME: lipid-rendering-ci
+
+jobs:
+  # Backend testing with scientific libraries
+  backend-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup micromamba
+      uses: mamba-org/setup-micromamba@v1
+      with:
+        micromamba-version: '1.5.8'
+        environment-name: ${{ env.CONDA_ENV_NAME }}
+        create-args: >-
+          python=3.11
+          pip
+        cache-environment: true
+        cache-downloads: true
+        
+    - name: Install scientific dependencies via conda
+      run: |
+        micromamba activate ${{ env.CONDA_ENV_NAME }}
+        # Install scientific libraries that are hard to install via pip
+        micromamba install -c conda-forge -y \
+          rdkit \
+          openbabel \
+          numpy \
+          scipy
+      shell: bash -el {0}
+      
+    - name: Install AutoDock Vina
+      run: |
+        micromamba activate ${{ env.CONDA_ENV_NAME }}
+        # Install Vina from conda-forge
+        micromamba install -c conda-forge -y autodock-vina
+        # Verify installation
+        vina --version || echo "Vina installation check failed, but continuing"
+      shell: bash -el {0}
+      
+    - name: Install Python dependencies
+      run: |
+        micromamba activate ${{ env.CONDA_ENV_NAME }}
+        cd server
+        pip install -r requirements.txt
+        # Install additional test dependencies
+        pip install pytest-cov pytest-django coverage factory-boy freezegun
+        # Try to install meeko (optional)
+        pip install meeko || echo "Meeko installation failed, continuing without it"
+      shell: bash -el {0}
+      
+      - name: Run Django system checks
+        run: |
+          micromamba activate ${{ env.CONDA_ENV_NAME }}
+          cd server
+          python manage.py check --settings=core.settings_ci
+        shell: bash -el {0}
+        
+      - name: Run Django migrations
+        run: |
+          micromamba activate ${{ env.CONDA_ENV_NAME }}
+          cd server
+          python manage.py migrate --run-syncdb --settings=core.settings_ci
+        shell: bash -el {0}
+      
+      - name: Run backend unit tests with coverage
+        run: |
+          micromamba activate ${{ env.CONDA_ENV_NAME }}
+          cd server
+          DJANGO_SETTINGS_MODULE=core.settings_ci pytest -v --cov=api --cov-report=xml --cov-report=term-missing \
+            --junitxml=test-results.xml \
+            --maxfail=5 \
+            --tb=short
+        shell: bash -el {0}
+      
+      - name: Upload backend test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-test-results
+          path: |
+            server/test-results.xml
+            server/coverage.xml
+          retention-days: 30
+        
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: server/coverage.xml
+          flags: backend
+          name: backend-coverage
+          fail_ci_if_error: false
+
+  # Frontend testing
+  frontend-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: lipid_viewer/package-lock.json
+        
+    - name: Install frontend dependencies
+      run: |
+        cd lipid_viewer
+        npm ci
+        
+    - name: Run frontend linting
+      run: |
+        cd lipid_viewer
+        npm run lint || echo "Linting issues found, continuing..."
+        
+    - name: Run frontend unit tests
+      run: |
+        cd lipid_viewer
+        npm test -- --coverage --watchAll=false --testResultsProcessor=jest-junit
+      env:
+        CI: true
+        
+    - name: Upload frontend test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: frontend-test-results
+        path: |
+          lipid_viewer/junit.xml
+          lipid_viewer/coverage/
+        retention-days: 30
+
+  # Seeded smoke test with real scientific libraries
+  smoke-test:
+    runs-on: ubuntu-latest
+    needs: [backend-test]
+    timeout-minutes: 15
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup micromamba
+      uses: mamba-org/setup-micromamba@v1
+      with:
+        micromamba-version: '1.5.8'
+        environment-name: ${{ env.CONDA_ENV_NAME }}
+        create-args: >-
+          python=3.11
+          pip
+        cache-environment: true
+        cache-downloads: true
+        
+    - name: Install scientific dependencies
+      run: |
+        micromamba activate ${{ env.CONDA_ENV_NAME }}
+        micromamba install -c conda-forge -y \
+          rdkit \
+          openbabel \
+          autodock-vina \
+          numpy \
+          scipy
+      shell: bash -el {0}
+      
+    - name: Install Python dependencies
+      run: |
+        micromamba activate ${{ env.CONDA_ENV_NAME }}
+        cd server
+        pip install -r requirements.txt
+        pip install requests  # For API testing
+      shell: bash -el {0}
+      
+      - name: Start Django server
+        run: |
+          micromamba activate ${{ env.CONDA_ENV_NAME }}
+          cd server
+          python manage.py migrate --run-syncdb --settings=core.settings_ci
+          DJANGO_SETTINGS_MODULE=core.settings_ci python manage.py runserver 8000 &
+          echo $! > django.pid
+          # Wait for server to start
+          sleep 10
+          # Verify server is running
+          curl -f http://localhost:8000/api/healthz || exit 1
+        shell: bash -el {0}
+      
+      - name: Run seeded smoke test
+        run: |
+          micromamba activate ${{ env.CONDA_ENV_NAME }}
+          cd server
+          DJANGO_SETTINGS_MODULE=core.settings_ci python -c "
+import sys
+import os
+sys.path.append('.')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings_ci')
+
+import django
+django.setup()
+
+from api.test_smoke_seeded import SmokeTestRunner
+runner = SmokeTestRunner()
+result = runner.run_full_smoke_test()
+print('Smoke test completed successfully!')
+print(f'Results saved to: {result[\"output_file\"]}')
+"
+        shell: bash -el {0}
+      
+      - name: Run benchmark PR subset
+        run: |
+          micromamba activate ${{ env.CONDA_ENV_NAME }}
+          cd benchmarks/scripts
+          DJANGO_SETTINGS_MODULE=core.settings_ci python benchmark_runner.py --mode pr --server-url http://localhost:8000
+        shell: bash -el {0}
+      
+      - name: Stop Django server
+        if: always()
+        run: |
+          if [ -f server/django.pid ]; then
+            kill $(cat server/django.pid) || true
+            rm server/django.pid
+          fi
+        shell: bash -el {0}
+      
+      - name: Upload smoke test artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-test-results
+          path: |
+            server/smoke_test_*.json
+            server/smoke_test_*.sdf
+            server/smoke_test_*.log
+            benchmarks/results/benchmark_results_*.json
+            benchmarks/results/benchmark_run_*.log
+          retention-days: 30
+
+  # Optional Docker build validation
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: [backend-test, frontend-test]
+    if: github.event_name == 'push' || github.event.pull_request.base.ref == 'main'
+    timeout-minutes: 20
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Build Docker image
+      run: |
+        cd server
+        docker build -t lipid-rendering:ci .
+        
+    - name: Test Docker container
+      run: |
+        # Start container
+        docker run -d --name lipid-test -p 8000:8000 lipid-rendering:ci
+        
+        # Wait for startup
+        sleep 15
+        
+        # Test health endpoint
+        curl -f http://localhost:8000/api/healthz
+        
+        # Stop container
+        docker stop lipid-test
+        docker rm lipid-test
+
+  # Aggregate results and final status
+  ci-complete:
+    runs-on: ubuntu-latest
+    needs: [backend-test, frontend-test, smoke-test]
+    if: always()
+    
+    steps:
+    - name: Check all jobs status
+      run: |
+        echo "Backend test: ${{ needs.backend-test.result }}"
+        echo "Frontend test: ${{ needs.frontend-test.result }}"
+        echo "Smoke test: ${{ needs.smoke-test.result }}"
+        
+        if [[ "${{ needs.backend-test.result }}" != "success" ]]; then
+          echo "Backend tests failed"
+          exit 1
+        fi
+        
+        if [[ "${{ needs.frontend-test.result }}" != "success" ]]; then
+          echo "Frontend tests failed"
+          exit 1
+        fi
+        
+        if [[ "${{ needs.smoke-test.result }}" != "success" ]]; then
+          echo "Smoke test failed"
+          exit 1
+        fi
+        
+        echo "All CI jobs completed successfully!"
+        
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      
+    - name: Create CI summary report
+      run: |
+        echo "# CI Pipeline Summary" > ci-summary.md
+        echo "" >> ci-summary.md
+        echo "**Build:** ${{ github.run_number }}" >> ci-summary.md
+        echo "**Commit:** ${{ github.sha }}" >> ci-summary.md
+        echo "**Branch:** ${{ github.ref_name }}" >> ci-summary.md
+        echo "" >> ci-summary.md
+        echo "## Test Results" >> ci-summary.md
+        echo "- ✅ Backend tests passed" >> ci-summary.md
+        echo "- ✅ Frontend tests passed" >> ci-summary.md
+        echo "- ✅ Seeded smoke test passed" >> ci-summary.md
+        echo "" >> ci-summary.md
+        echo "## Artifacts" >> ci-summary.md
+        echo "- Backend test results and coverage" >> ci-summary.md
+        echo "- Frontend test results and coverage" >> ci-summary.md
+        echo "- Smoke test results (JSON, SDF, logs)" >> ci-summary.md
+        
+    - name: Upload CI summary
+      uses: actions/upload-artifact@v4
+      with:
+        name: ci-summary
+        path: ci-summary.md
+        retention-days: 90

@@ -1,0 +1,71 @@
+# Docker Compose for AWS deployment with AutoDock Vina
+# Supports both CUDA and CPU-only configurations
+
+services:
+  # CUDA-enabled container for GPU instances
+  app-cuda:
+    build:
+      context: .
+      dockerfile: server/Dockerfile.cuda
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=False
+      - DJANGO_SETTINGS_MODULE=core.settings
+      - DOCKING_ALLOW_MOCK=False
+      - DOCKING_FORCE_REAL=True
+      - DOCKING_CUDA_ENABLED=True
+      - CUDA_VISIBLE_DEVICES=all
+    volumes:
+      - ./lipid_viewer/dist:/app/staticfiles/frontend
+      - docking_data:/app/docking_data
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/healthz', timeout=10)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    profiles:
+      - cuda
+
+  # CPU-only container for standard instances
+  app-cpu:
+    build:
+      context: .
+      dockerfile: server/Dockerfile.cpu
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=False
+      - DJANGO_SETTINGS_MODULE=core.settings
+      - DOCKING_ALLOW_MOCK=False
+      - DOCKING_FORCE_REAL=True
+      - DOCKING_CUDA_ENABLED=False
+    volumes:
+      - ./lipid_viewer/dist:/app/staticfiles/frontend
+      - docking_data:/app/docking_data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/healthz', timeout=10)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    profiles:
+      - cpu
+
+volumes:
+  docking_data:
+    driver: local
+
+networks:
+  default:
+    name: lipid-docking-aws-network

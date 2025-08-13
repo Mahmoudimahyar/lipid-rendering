@@ -7,6 +7,7 @@ import MoleculeViewer from '../components/MoleculeViewer'
 import ViewControls from '../components/ViewControls'
 import DockingVisualization from '../components/DockingVisualization'
 import AdvancedDockingControls from '../components/AdvancedDockingControls'
+import MetadataPanel from '../components/MetadataPanel'
 import { DockingAPI } from '../utils/dockingApi'
 import { ConnectionHealthChecker } from '../utils/connectionTest'
 
@@ -32,8 +33,9 @@ function DockingPage() {
   })
   const [dockingJob, setDockingJob] = useState(null)
   const [dockingResults, setDockingResults] = useState(null)
+  const [jobMetadata, setJobMetadata] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState('ligand') // 'ligand', 'docking', 'advanced'
+  const [activeTab, setActiveTab] = useState('ligand') // 'ligand', 'docking', 'advanced', 'metadata'
   
   // Connection health state
   const [backendConnected, setBackendConnected] = useState(true)
@@ -162,8 +164,9 @@ function DockingPage() {
       const results = await DockingAPI.pollDockingJob(
         job.job_id,
         (status) => {
-          // Update job status
+          // Update job status and metadata
           setDockingJob(status)
+          setJobMetadata(status) // The API now returns comprehensive metadata
           if (status.status === 'running') {
             toast.loading('Docking calculation in progress...', { id: 'docking-progress' })
           }
@@ -239,6 +242,7 @@ function DockingPage() {
         job.job_id,
         (status) => {
           setDockingJob(status)
+          setJobMetadata(status) // The API now returns comprehensive metadata
           if (status.status === 'running') {
             toast.loading('Advanced docking in progress...', { id: 'advanced-docking-progress' })
           }
@@ -254,6 +258,41 @@ function DockingPage() {
       toast.error(`Advanced docking failed: ${error.message}`, { id: 'advanced-docking-progress' })
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  // Export functionality
+  const handleExportResults = async () => {
+    if (!dockingJob?.job_id) {
+      toast.error('No job available for export')
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/dock/export/${dockingJob.job_id}`)
+      if (!response.ok) {
+        throw new Error(`Export failed: ${response.statusText}`)
+      }
+
+      const exportData = await response.json()
+      
+      // Create downloadable file
+      const dataStr = JSON.stringify(exportData, null, 2)
+      const dataBlob = new Blob([dataStr], { type: 'application/json' })
+      const url = URL.createObjectURL(dataBlob)
+      
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `docking_export_${dockingJob.job_id}.json`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+      
+      toast.success('Results exported successfully!')
+    } catch (error) {
+      console.error('Export error:', error)
+      toast.error(`Export failed: ${error.message}`)
     }
   }
 
@@ -323,6 +362,26 @@ function DockingPage() {
                     <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
                       Expert
                     </span>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('metadata')}
+                    className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                      activeTab === 'metadata'
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                    disabled={!jobMetadata}
+                  >
+                    Metadata
+                    {jobMetadata?.engine_metadata?.is_mock !== undefined && (
+                      <span className={`ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                        jobMetadata.engine_metadata.is_mock 
+                          ? 'bg-red-100 text-red-800' 
+                          : 'bg-green-100 text-green-800'
+                      }`}>
+                        {jobMetadata.engine_metadata.is_mock ? 'MOCK' : 'REAL'}
+                      </span>
+                    )}
                   </button>
                 </nav>
               </div>
@@ -399,6 +458,14 @@ function DockingPage() {
                       size_z: parseFloat(sizeZRef.current?.value || 20)
                     }}
                     receptorPdbId={pdbId}
+                  />
+                )}
+
+                {activeTab === 'metadata' && (
+                  <MetadataPanel
+                    jobData={jobMetadata}
+                    onExport={handleExportResults}
+                    className="w-full"
                   />
                 )}
               </div>

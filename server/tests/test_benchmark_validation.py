@@ -12,7 +12,7 @@ from django.urls import reverse
 from unittest.mock import patch, MagicMock
 import numpy as np
 
-from api.docking_engine import DockingEngine
+from api.docking_utils import DockingEngine
 from api.models import DockingJob
 
 

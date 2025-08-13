@@ -416,9 +416,8 @@ class RealPocketDetector:
         """
         if not RealPocketDetector.is_available():
             # Fallback to mock implementation
-            from .advanced_docking import PocketDetector as MockPocketDetector
             logger.warning("Real pocket detection not available, using mock")
-            return MockPocketDetector.detect_pockets(pdb_id, pdb_content)
+            return PocketDetector._detect_pockets_mock(pdb_id, pdb_content)
         
         try:
             with GeometricPocketDetector() as detector:
@@ -439,8 +438,7 @@ class RealPocketDetector:
         except Exception as e:
             logger.error(f"Real pocket detection failed: {e}")
             # Fallback to mock
-            from .advanced_docking import PocketDetector as MockPocketDetector
-            return MockPocketDetector.detect_pockets(pdb_id, pdb_content)
+            return PocketDetector._detect_pockets_mock(pdb_id, pdb_content)
     
     @staticmethod
     def analyze_site_vs_pockets(docking_params: Dict, detected_pockets: List[Dict]) -> Dict[str, Any]:
@@ -528,3 +526,78 @@ class PocketDetector:
     def analyze_site_vs_pockets(docking_params: Dict, detected_pockets: List[Dict]) -> Dict[str, Any]:
         """Analyze site vs pockets using real implementation"""
         return RealPocketDetector.analyze_site_vs_pockets(docking_params, detected_pockets)
+    
+    @staticmethod
+    def _detect_pockets_mock(pdb_id: str, pdb_content: str) -> List[Dict]:
+        """
+        Mock pocket detection for fallback
+        """
+        import random
+        import math
+        
+        # Mock pocket detection - in reality this would:
+        # 1. Write PDB to temporary file
+        # 2. Run fpocket or similar tool
+        # 3. Parse pocket detection results
+        
+        num_pockets = random.randint(2, 8)
+        pockets = []
+        
+        for i in range(num_pockets):
+            # Generate realistic pocket properties
+            center_x = random.uniform(-20, 20)
+            center_y = random.uniform(-20, 20)
+            center_z = random.uniform(-20, 20)
+            
+            pocket = {
+                'pocket_number': i + 1,
+                'center_x': round(center_x, 3),
+                'center_y': round(center_y, 3),
+                'center_z': round(center_z, 3),
+                'radius': round(random.uniform(8, 25), 2),
+                'volume': round(random.uniform(200, 2000), 1),
+                'surface_area': round(random.uniform(400, 3000), 1),
+                'druggability_score': round(random.uniform(0.3, 1.0), 3),
+                'hydrophobicity': round(random.uniform(0.2, 0.8), 3),
+                'polarity': round(random.uniform(0.1, 0.7), 3),
+                'confidence_score': round(random.uniform(0.6, 0.95), 3),
+                'detection_method': 'fpocket',
+                'residues': PocketDetector._generate_pocket_residues_mock(),
+                'properties': {
+                    'is_druggable': random.choice([True, False]),
+                    'cavity_type': random.choice(['deep', 'shallow', 'tunnel', 'cleft']),
+                    'accessibility': random.choice(['buried', 'surface', 'partially_buried']),
+                    'conservation_score': round(random.uniform(0.0, 1.0), 3)
+                }
+            }
+            
+            pockets.append(pocket)
+        
+        # Sort by druggability score (highest first)
+        pockets.sort(key=lambda x: x['druggability_score'], reverse=True)
+        
+        return pockets
+    
+    @staticmethod
+    def _generate_pocket_residues_mock() -> List[Dict]:
+        """Generate mock residue list for pocket"""
+        import random
+        
+        amino_acids = ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLU', 'GLN', 'GLY', 
+                      'HIS', 'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 
+                      'THR', 'TRP', 'TYR', 'VAL']
+        
+        num_residues = random.randint(10, 30)
+        residues = []
+        
+        for i in range(num_residues):
+            residue = {
+                'residue_name': random.choice(amino_acids),
+                'residue_number': random.randint(50, 300),
+                'chain_id': random.choice(['A', 'B']),
+                'distance_to_center': round(random.uniform(3.0, 15.0), 2),
+                'contact_type': random.choice(['direct', 'water_mediated', 'van_der_waals'])
+            }
+            residues.append(residue)
+        
+        return residues

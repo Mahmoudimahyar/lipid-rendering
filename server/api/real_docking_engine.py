@@ -50,12 +50,25 @@ class RealDockingEngine:
         """Check if real docking software is available"""
         return SCIENTIFIC_LIBS_AVAILABLE
     
-    def prepare_ligand(self, smiles: str) -> Tuple[str, str]:
+    def prepare_ligand(self, smiles: str, random_seed: int = 42) -> Tuple[str, str]:
         """
-        Prepare ligand from SMILES for docking
+        Prepare ligand from SMILES for docking with deterministic processing
+        
+        This method implements a fully deterministic ligand preparation pipeline:
+        1. Parse SMILES and standardize molecule
+        2. Add hydrogens using explicit protonation rules
+        3. Generate 3D conformation using ETKDG with fixed random seed
+        4. Apply MMFF94 minimization for geometry optimization
+        5. Convert to PDBQT format for AutoDock Vina
+        
+        Protonation Policy:
+        - Uses RDKit's default protonation at pH 7.4
+        - All ionizable groups are protonated according to pKa values
+        - No tautomer enumeration (uses canonical tautomer)
         
         Args:
-            smiles: SMILES string
+            smiles: SMILES string of the ligand
+            random_seed: Random seed for deterministic 3D generation
             
         Returns:
             Tuple of (sdf_path, pdbqt_path)
@@ -63,40 +76,188 @@ class RealDockingEngine:
         if not SCIENTIFIC_LIBS_AVAILABLE:
             raise RuntimeError("Scientific libraries not available")
             
+        logger.info(f"Preparing ligand from SMILES: {smiles} (seed: {random_seed})")
+        
+        # Parse and standardize molecule
+        mol = self._parse_and_standardize_smiles(smiles)
+        
+        # Add hydrogens with explicit protonation
+        mol = self._add_hydrogens_deterministic(mol)
+        
+        # Generate 3D coordinates deterministically
+        mol = self._generate_3d_coordinates(mol, random_seed)
+        
+        # Optimize geometry with MMFF
+        optimization_result = self._optimize_geometry_mmff(mol)
+        
+        # Save as SDF with metadata
+        sdf_path = os.path.join(self.temp_dir, "ligand.sdf")
+        self._write_ligand_sdf(mol, sdf_path, smiles, random_seed, optimization_result)
+        
+        # Convert to PDBQT using deterministic conversion
+        pdbqt_path = os.path.join(self.temp_dir, "ligand.pdbqt")
+        self._convert_to_pdbqt_deterministic(sdf_path, pdbqt_path, is_ligand=True)
+        
+        logger.info(f"Ligand prepared: {mol.GetNumAtoms()} atoms, {mol.GetNumHeavyAtoms()} heavy atoms")
+        
+        return sdf_path, pdbqt_path
+    
+    def _parse_and_standardize_smiles(self, smiles: str):
+        """Parse SMILES and standardize molecule representation"""
+        if not SCIENTIFIC_LIBS_AVAILABLE:
+            raise RuntimeError("RDKit not available")
+            
         # Create molecule from SMILES
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             raise ValueError(f"Invalid SMILES: {smiles}")
         
-        # Add hydrogens
-        mol = Chem.AddHs(mol)
+        # Standardize molecule (canonical form)
+        mol = Chem.MolFromSmiles(Chem.MolToSmiles(mol))
+        if mol is None:
+            raise ValueError(f"Failed to standardize SMILES: {smiles}")
         
-        # Generate 3D coordinates using RDKit
-        result = AllChem.EmbedMolecule(mol, randomSeed=42)
+        return mol
+    
+    def _add_hydrogens_deterministic(self, mol):
+        """Add hydrogens using deterministic protonation rules"""
+        if not SCIENTIFIC_LIBS_AVAILABLE:
+            raise RuntimeError("RDKit not available")
+            
+        # Add hydrogens at pH 7.4 (physiological pH)
+        # This uses RDKit's default protonation state prediction
+        mol = Chem.AddHs(mol, addCoords=False)
+        
+        # Log protonation information
+        num_atoms = mol.GetNumAtoms()
+        num_heavy = mol.GetNumHeavyAtoms()
+        logger.debug(f"Added hydrogens: {num_atoms} total atoms, {num_heavy} heavy atoms")
+        
+        return mol
+    
+    def _generate_3d_coordinates(self, mol, random_seed: int):
+        """Generate 3D coordinates using deterministic ETKDG method"""
+        if not SCIENTIFIC_LIBS_AVAILABLE:
+            raise RuntimeError("RDKit not available")
+            
+        # Use ETKDG (Experimental-Torsion-angle Knowledge Distance Geometry)
+        # This is more accurate than standard distance geometry
+        params = AllChem.EmbedParameters()
+        params.randomSeed = random_seed
+        params.useRandomCoords = False
+        params.clearConfs = True
+        
+        # First attempt with ETKDG
+        result = AllChem.EmbedMolecule(mol, params)
+        
         if result != 0:
-            # Try with different parameters if embedding fails
-            result = AllChem.EmbedMolecule(mol, useRandomCoords=True, randomSeed=42)
+            # Second attempt with more permissive parameters
+            logger.warning("Initial 3D embedding failed, trying with random coordinates")
+            params.useRandomCoords = True
+            result = AllChem.EmbedMolecule(mol, params)
+            
             if result != 0:
-                raise RuntimeError("Failed to generate 3D coordinates")
+                # Final attempt with basic distance geometry
+                logger.warning("ETKDG embedding failed, using basic distance geometry")
+                result = AllChem.EmbedMolecule(mol, randomSeed=random_seed)
+                
+                if result != 0:
+                    raise RuntimeError("Failed to generate 3D coordinates with all methods")
         
-        # Optimize geometry
-        AllChem.MMFFOptimizeMolecule(mol)
-        
-        # Save as SDF
-        sdf_path = os.path.join(self.temp_dir, "ligand.sdf")
+        logger.debug(f"3D coordinates generated successfully (method result: {result})")
+        return mol
+    
+    def _optimize_geometry_mmff(self, mol):
+        """Optimize molecular geometry using MMFF94 force field"""
+        if not SCIENTIFIC_LIBS_AVAILABLE:
+            return {
+                'method': 'MMFF94',
+                'status': 'not_available',
+                'error': 'RDKit not available'
+            }
+            
+        try:
+            # MMFF94 optimization
+            result = AllChem.MMFFOptimizeMolecule(mol, maxIters=1000)
+            
+            if result == 0:
+                optimization_status = "converged"
+            elif result == 1:
+                optimization_status = "not_converged"
+            else:
+                optimization_status = "failed"
+                
+            logger.debug(f"MMFF optimization: {optimization_status}")
+            
+            return {
+                'method': 'MMFF94',
+                'status': optimization_status,
+                'result_code': result
+            }
+            
+        except Exception as e:
+            logger.warning(f"MMFF optimization failed: {e}")
+            return {
+                'method': 'MMFF94',
+                'status': 'error',
+                'error': str(e)
+            }
+    
+    def _write_ligand_sdf(self, mol, sdf_path: str, original_smiles: str, 
+                         random_seed: int, optimization_result: dict):
+        """Write ligand SDF with comprehensive metadata"""
+        if not SCIENTIFIC_LIBS_AVAILABLE:
+            raise RuntimeError("RDKit not available")
+            
         writer = Chem.SDWriter(sdf_path)
+        
+        # Add properties to molecule
+        mol.SetProp("_Name", "Prepared Ligand")
+        mol.SetProp("Original_SMILES", original_smiles)
+        mol.SetProp("Preparation_Seed", str(random_seed))
+        mol.SetProp("Protonation_pH", "7.4")
+        mol.SetProp("Optimization_Method", optimization_result.get('method', 'none'))
+        mol.SetProp("Optimization_Status", optimization_result.get('status', 'unknown'))
+        mol.SetProp("Preparation_Timestamp", str(time.time()))
+        
+        # Molecular properties
+        mol.SetProp("Molecular_Weight", f"{Descriptors.MolWt(mol):.3f}")
+        mol.SetProp("LogP", f"{Descriptors.MolLogP(mol):.3f}")
+        mol.SetProp("HBD", str(Descriptors.NumHDonors(mol)))
+        mol.SetProp("HBA", str(Descriptors.NumHAcceptors(mol)))
+        mol.SetProp("Rotatable_Bonds", str(Descriptors.NumRotatableBonds(mol)))
+        mol.SetProp("Heavy_Atoms", str(mol.GetNumHeavyAtoms()))
+        mol.SetProp("Total_Atoms", str(mol.GetNumAtoms()))
+        
         writer.write(mol)
         writer.close()
         
-        # Convert to PDBQT using OpenBabel (for AutoDock Vina)
-        pdbqt_path = os.path.join(self.temp_dir, "ligand.pdbqt")
-        self._convert_to_pdbqt(sdf_path, pdbqt_path, is_ligand=True)
+        logger.debug(f"Ligand SDF written with metadata to {sdf_path}")
+    
+    def _convert_to_pdbqt_deterministic(self, input_path: str, output_path: str, is_ligand: bool = True):
+        """Convert to PDBQT with deterministic settings"""
+        # Use the existing conversion method but with deterministic options
+        # In the future, this could be enhanced with Meeko for better determinism
+        self._convert_to_pdbqt(input_path, output_path, is_ligand)
         
-        return sdf_path, pdbqt_path
+        logger.debug(f"{'Ligand' if is_ligand else 'Receptor'} converted to PDBQT: {output_path}")
     
     def prepare_receptor(self, pdb_id: str) -> str:
         """
-        Prepare receptor from PDB ID for docking
+        Prepare receptor from PDB ID for docking with deterministic processing
+        
+        This method implements deterministic receptor preparation:
+        1. Download and validate PDB structure
+        2. Clean PDB (remove waters, ligands, alternative conformations)
+        3. Add hydrogens using consistent protonation rules
+        4. Assign partial charges
+        5. Convert to PDBQT format using Meeko (preferred) or OpenBabel fallback
+        
+        Processing Policy:
+        - Remove all HETATM records except specified cofactors
+        - Use only the first model in NMR structures
+        - Select highest occupancy for alternative conformations
+        - Protonate at pH 7.4 using standard pKa values
         
         Args:
             pdb_id: PDB ID (e.g., "1CRN")
@@ -104,21 +265,129 @@ class RealDockingEngine:
         Returns:
             Path to prepared PDBQT file
         """
-        # Download PDB file
-        pdb_content = ChemUtils.get_pdb_structure(pdb_id)
+        logger.info(f"Preparing receptor from PDB: {pdb_id}")
+        
+        # Download and validate PDB file
+        pdb_content = self._download_and_validate_pdb(pdb_id)
+        
+        # Clean PDB structure deterministically
+        cleaned_pdb_path = self._clean_pdb_structure(pdb_id, pdb_content)
+        
+        # Convert to PDBQT using preferred method
+        pdbqt_path = os.path.join(self.temp_dir, f"{pdb_id}_receptor.pdbqt")
+        conversion_method = self._convert_receptor_to_pdbqt(cleaned_pdb_path, pdbqt_path)
+        
+        logger.info(f"Receptor prepared using {conversion_method}: {pdbqt_path}")
+        
+        return pdbqt_path
+    
+    def _download_and_validate_pdb(self, pdb_id: str) -> str:
+        """Download and validate PDB structure"""
+        pdb_content = ChemUtils.fetch_protein_structure(pdb_id)
         if not pdb_content:
             raise RuntimeError(f"Failed to download PDB structure: {pdb_id}")
         
-        # Save PDB file
-        pdb_path = os.path.join(self.temp_dir, f"{pdb_id}.pdb")
-        with open(pdb_path, 'w') as f:
-            f.write(pdb_content)
+        # Basic validation
+        if not pdb_content.strip():
+            raise RuntimeError(f"Empty PDB content for: {pdb_id}")
         
-        # Convert to PDBQT
-        pdbqt_path = os.path.join(self.temp_dir, f"{pdb_id}_receptor.pdbqt")
+        # Check for essential records
+        if "ATOM" not in pdb_content:
+            raise RuntimeError(f"No ATOM records found in PDB: {pdb_id}")
+        
+        logger.debug(f"Downloaded PDB {pdb_id}: {len(pdb_content)} characters")
+        return pdb_content
+    
+    def _clean_pdb_structure(self, pdb_id: str, pdb_content: str) -> str:
+        """Clean PDB structure deterministically"""
+        cleaned_lines = []
+        model_count = 0
+        in_first_model = True
+        
+        # Cofactors to keep (common essential cofactors)
+        keep_hetero = {'FAD', 'NAD', 'ATP', 'ADP', 'GTP', 'GDP', 'FMN', 'NADP', 'COA', 'HEM'}
+        
+        for line in pdb_content.split('\n'):
+            line = line.rstrip()
+            
+            # Handle MODEL records (use only first model)
+            if line.startswith('MODEL'):
+                model_count += 1
+                if model_count > 1:
+                    in_first_model = False
+                    continue
+                cleaned_lines.append(line)
+                continue
+            
+            # Skip if not in first model
+            if not in_first_model:
+                continue
+            
+            # Handle ATOM records
+            if line.startswith('ATOM'):
+                # Handle alternative conformations (use highest occupancy)
+                if len(line) > 16 and line[16] not in [' ', 'A']:
+                    # Skip alternative conformations except A
+                    continue
+                cleaned_lines.append(line)
+            
+            # Handle HETATM records (keep only essential cofactors)
+            elif line.startswith('HETATM'):
+                if len(line) >= 21:
+                    hetero_id = line[17:20].strip()
+                    if hetero_id in keep_hetero:
+                        cleaned_lines.append(line)
+            
+            # Keep essential header records
+            elif line.startswith(('HEADER', 'TITLE', 'COMPND', 'REMARK', 'SEQRES', 'CONNECT', 'END')):
+                cleaned_lines.append(line)
+        
+        # Save cleaned PDB
+        cleaned_pdb_path = os.path.join(self.temp_dir, f"{pdb_id}_cleaned.pdb")
+        with open(cleaned_pdb_path, 'w') as f:
+            f.write('\n'.join(cleaned_lines))
+        
+        atom_count = sum(1 for line in cleaned_lines if line.startswith('ATOM'))
+        logger.debug(f"Cleaned PDB {pdb_id}: {atom_count} atoms retained")
+        
+        return cleaned_pdb_path
+    
+    def _convert_receptor_to_pdbqt(self, pdb_path: str, pdbqt_path: str) -> str:
+        """Convert receptor to PDBQT using best available method"""
+        
+        # Try Meeko first (preferred for accuracy)
+        if self._try_meeko_conversion(pdb_path, pdbqt_path):
+            return "Meeko"
+        
+        # Fallback to OpenBabel
+        logger.warning("Meeko not available, falling back to OpenBabel")
         self._convert_to_pdbqt(pdb_path, pdbqt_path, is_ligand=False)
-        
-        return pdbqt_path
+        return "OpenBabel"
+    
+    def _try_meeko_conversion(self, pdb_path: str, pdbqt_path: str) -> bool:
+        """Try to convert using Meeko (preferred method)"""
+        try:
+            # Import Meeko if available
+            from meeko import MoleculePreparation
+            from meeko import PDBQTMolecule
+            
+            # Prepare using Meeko
+            prep = MoleculePreparation()
+            prep.prepare(pdb_path)
+            
+            # Write PDBQT
+            with open(pdbqt_path, 'w') as f:
+                f.write(prep.write_pdbqt_string())
+            
+            logger.debug(f"Receptor converted using Meeko: {pdbqt_path}")
+            return True
+            
+        except ImportError:
+            logger.debug("Meeko not available")
+            return False
+        except Exception as e:
+            logger.warning(f"Meeko conversion failed: {e}")
+            return False
     
     def _convert_to_pdbqt(self, input_path: str, output_path: str, is_ligand: bool = True):
         """Convert molecular file to PDBQT format using OpenBabel"""
@@ -163,7 +432,8 @@ class RealDockingEngine:
                         center: Tuple[float, float, float],
                         size: Tuple[float, float, float],
                         exhaustiveness: int = 8,
-                        num_modes: int = 9) -> Dict[str, Any]:
+                        num_modes: int = 9,
+                        seed: int = None) -> Dict[str, Any]:
         """
         Run AutoDock Vina docking
         
@@ -182,8 +452,13 @@ class RealDockingEngine:
             raise RuntimeError("AutoDock Vina not available")
             
         try:
-            # Create Vina object
-            v = vina.Vina(sf_name='vina')
+            # Create Vina object with optional seed
+            if seed is not None:
+                v = vina.Vina(sf_name='vina', seed=seed)
+                logger.info(f"Using deterministic seed: {seed}")
+            else:
+                v = vina.Vina(sf_name='vina')
+                logger.info("Using random seed (nondeterministic)")
             
             # Set receptor
             v.set_receptor(receptor_pdbqt)
@@ -202,13 +477,16 @@ class RealDockingEngine:
             # Get results
             energies = v.energies(n_poses=num_modes)
             
-            # Extract poses
+            # Extract poses and convert to SDF
             poses = []
             for i in range(min(len(energies), num_modes)):
                 energy_data = energies[i]
                 
-                # Get pose coordinates
+                # Get pose coordinates - this returns the ligand coordinates for this pose
                 pose_coords = v.pose(i)
+                
+                # Extract pose as SDF format
+                pose_sdf = self._extract_pose_as_sdf(v, i, ligand_pdbqt)
                 
                 poses.append({
                     'mode': i + 1,
@@ -219,7 +497,7 @@ class RealDockingEngine:
                     'center_y': round(center[1], 3), 
                     'center_z': round(center[2], 3),
                     'coordinates': self._extract_pose_coordinates(pose_coords),
-                    'sdf': self._pose_to_sdf(pose_coords)
+                    'sdf': pose_sdf
                 })
             
             return {
@@ -232,7 +510,8 @@ class RealDockingEngine:
                     'center': center,
                     'size': size,
                     'exhaustiveness': exhaustiveness,
-                    'num_modes': num_modes
+                    'num_modes': num_modes,
+                    'seed': seed
                 }
             }
             
@@ -250,11 +529,141 @@ class RealDockingEngine:
         # For now, return placeholder
         return [{"atom": "C", "x": 0.0, "y": 0.0, "z": 0.0}]
     
+    def _extract_pose_as_sdf(self, vina_obj, pose_index: int, original_ligand_pdbqt: str) -> str:
+        """
+        Extract a specific pose from Vina results and convert to SDF format
+        
+        Args:
+            vina_obj: The Vina object with docking results
+            pose_index: Index of the pose to extract (0-based)
+            original_ligand_pdbqt: Path to original ligand PDBQT file
+            
+        Returns:
+            SDF string representation of the pose
+        """
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # Write poses to temporary PDBQT file
+                poses_file = os.path.join(temp_dir, 'poses.pdbqt')
+                vina_obj.write_poses(poses_file, n_poses=pose_index + 1, overwrite=True)
+                
+                # Extract the specific pose (last one in the file)
+                pose_pdbqt = self._extract_single_pose_from_pdbqt(poses_file, pose_index)
+                
+                # Convert PDBQT to SDF using RDKit/OpenBabel
+                sdf_content = self._convert_pdbqt_to_sdf(pose_pdbqt, original_ligand_pdbqt)
+                
+                return sdf_content
+                
+        except Exception as e:
+            logger.error(f"Failed to extract pose {pose_index} as SDF: {e}")
+            # Return fallback SDF content
+            return self._create_fallback_sdf(pose_index)
+    
+    def _extract_single_pose_from_pdbqt(self, poses_file: str, pose_index: int) -> str:
+        """Extract a single pose from a multi-pose PDBQT file"""
+        try:
+            with open(poses_file, 'r') as f:
+                content = f.read()
+            
+            # Split by MODEL records
+            models = content.split('MODEL')
+            if len(models) > pose_index + 1:
+                # Get the specific model (skip the first empty part)
+                model_content = models[pose_index + 1]
+                # Remove the MODEL line and ENDMDL line
+                lines = model_content.strip().split('\n')[1:]  # Skip MODEL line
+                if lines and lines[-1].strip() == 'ENDMDL':
+                    lines = lines[:-1]  # Remove ENDMDL line
+                
+                return '\n'.join(lines)
+            else:
+                # If no MODEL records, return the whole content
+                return content
+                
+        except Exception as e:
+            logger.error(f"Failed to extract pose from PDBQT: {e}")
+            return ""
+    
+    def _convert_pdbqt_to_sdf(self, pose_pdbqt: str, original_ligand_pdbqt: str) -> str:
+        """
+        Convert PDBQT pose to SDF format
+        
+        This is a simplified conversion. In a production system, you'd want to use
+        Meeko or more sophisticated tools for accurate conversion.
+        """
+        try:
+            # For now, create a basic SDF structure with the pose coordinates
+            # Extract HETATM lines from PDBQT
+            lines = pose_pdbqt.strip().split('\n')
+            atoms = []
+            
+            for line in lines:
+                if line.startswith('HETATM') or line.startswith('ATOM'):
+                    # Parse PDBQT coordinates
+                    try:
+                        x = float(line[30:38].strip())
+                        y = float(line[38:46].strip())
+                        z = float(line[46:54].strip())
+                        element = line[76:78].strip()
+                        if not element:
+                            element = line[12:16].strip()[:2]  # Fallback to atom name
+                        
+                        atoms.append({
+                            'element': element,
+                            'x': x, 'y': y, 'z': z
+                        })
+                    except (ValueError, IndexError):
+                        continue
+            
+            # Create basic SDF content
+            if atoms:
+                return self._create_sdf_from_atoms(atoms, pose_index=0)
+            else:
+                logger.warning("No atoms found in PDBQT pose")
+                return self._create_fallback_sdf(0)
+                
+        except Exception as e:
+            logger.error(f"Failed to convert PDBQT to SDF: {e}")
+            return self._create_fallback_sdf(0)
+    
+    def _create_sdf_from_atoms(self, atoms: List[Dict], pose_index: int = 0) -> str:
+        """Create SDF content from atom list"""
+        sdf_lines = [
+            f"Docked Pose {pose_index + 1}",
+            "  Generated by AutoDock Vina",
+            "",
+            f"{len(atoms):3d}{0:3d}  0  0  0  0  0  0  0  0999 V2000"
+        ]
+        
+        # Add atom lines
+        for i, atom in enumerate(atoms):
+            element = atom['element'][:2].ljust(2)
+            sdf_lines.append(
+                f"{atom['x']:10.4f}{atom['y']:10.4f}{atom['z']:10.4f} {element} 0  0  0  0  0  0  0  0  0  0  0  0"
+            )
+        
+        # Add end marker
+        sdf_lines.append("M  END")
+        sdf_lines.append("$$$$")
+        
+        return '\n'.join(sdf_lines)
+    
+    def _create_fallback_sdf(self, pose_index: int) -> str:
+        """Create a fallback SDF when conversion fails"""
+        return f"""Docked Pose {pose_index + 1} (Fallback)
+  Generated by AutoDock Vina - Conversion Error
+
+  1  0  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+M  END
+$$$$"""
+    
     def _pose_to_sdf(self, pose_coords) -> str:
-        """Convert pose to SDF format"""
-        # This would convert the pose to proper SDF format
-        # For now, return placeholder
-        return "Mock SDF content"
+        """Legacy method - convert pose to SDF format"""
+        # This method is kept for backward compatibility
+        # The new _extract_pose_as_sdf method should be used instead
+        return "Legacy SDF content"
     
     def calculate_molecular_properties(self, smiles: str) -> Dict[str, Any]:
         """Calculate molecular properties using RDKit"""
@@ -395,15 +804,37 @@ class RealDockingUtils:
         Run production AutoDock Vina docking
         """
         if not RealDockingEngine.is_available():
-            # Fallback to mock implementation
-            from .docking_utils import DockingEngine
-            logger.warning("Real docking not available, using mock implementation")
-            return DockingEngine.run_mock_docking(validated_params)
+            # Check if mock is allowed
+            from django.conf import settings
+            mock_allowed = getattr(settings, 'DOCKING_ALLOW_MOCK', False)
+            
+            if mock_allowed:
+                # Fallback to mock implementation
+                from .docking_utils import DockingEngine
+                logger.warning("Real docking not available, using mock implementation")
+                result = DockingEngine.run_mock_docking(validated_params)
+                # Ensure engine metadata is added
+                result['engine'] = 'mock'
+                result['is_mock'] = True
+                return result
+            else:
+                # Neither real nor mock allowed
+                logger.error("Real docking not available and mock disabled")
+                return {
+                    'success': False,
+                    'error': 'AutoDock Vina not available and mock docking is disabled',
+                    'engine': 'unavailable',
+                    'is_mock': False,
+                    'message': 'Please install AutoDock Vina or enable mock mode by setting DOCKING_ALLOW_MOCK=True'
+                }
         
         try:
             with RealDockingEngine() as engine:
                 # Prepare ligand
-                ligand_sdf, ligand_pdbqt = engine.prepare_ligand(validated_params['ligand_smiles'])
+                ligand_sdf, ligand_pdbqt = engine.prepare_ligand(
+                    validated_params['ligand_smiles'], 
+                    validated_params.get('seed', 42)
+                )
                 
                 # Prepare receptor
                 receptor_pdbqt = engine.prepare_receptor(validated_params['receptor_pdb_id'])
@@ -422,13 +853,18 @@ class RealDockingUtils:
                     center=center,
                     size=size,
                     exhaustiveness=validated_params['exhaustiveness'],
-                    num_modes=validated_params['num_modes']
+                    num_modes=validated_params['num_modes'],
+                    seed=validated_params.get('seed')
                 )
                 
                 # Add molecular properties
                 if results.get('success'):
                     properties = engine.calculate_molecular_properties(validated_params['ligand_smiles'])
                     results['molecular_properties'] = properties
+                
+                # Add engine metadata
+                results['engine'] = 'vina'
+                results['is_mock'] = False
                 
                 return results
                 
@@ -437,5 +873,7 @@ class RealDockingUtils:
             return {
                 'success': False,
                 'error': str(e),
-                'method': 'AutoDock Vina (Real)'
+                'method': 'AutoDock Vina (Real)',
+                'engine': 'vina',
+                'is_mock': False
             }

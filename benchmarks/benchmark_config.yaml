@@ -1,0 +1,162 @@
+# Benchmark Suite Configuration for Lipid Rendering
+# Defines known protein-ligand complexes for validation testing
+
+# Global benchmark settings
+global_settings:
+  # Docking parameters for benchmarks
+  docking_params:
+    exhaustiveness: 8  # Standard exhaustiveness for benchmarks
+    num_modes: 9       # Generate more modes for better sampling
+    seed: 42          # Fixed seed for reproducibility
+  
+  # Validation thresholds
+  thresholds:
+    rmsd_success: 2.0      # RMSD ≤ 2.0 Å considered successful
+    rmsd_excellent: 1.0    # RMSD ≤ 1.0 Å considered excellent
+    affinity_variance: 0.5 # Energy variance ≤ 0.5 kcal/mol for consistency
+    min_poses: 3           # Minimum number of poses required
+  
+  # CI settings
+  ci_settings:
+    pr_benchmarks: ["1STP", "3PTB"]  # Lightweight subset for PRs
+    nightly_benchmarks: "all"        # Full suite for nightly builds
+    timeout_minutes: 30              # Max time per benchmark
+
+# Benchmark definitions
+benchmarks:
+  # Streptavidin-Biotin Complex
+  # Strong protein-ligand interaction, well-studied system
+  "1STP":
+    name: "Streptavidin-Biotin"
+    description: "Biotin bound to streptavidin - high affinity interaction"
+    pdb_id: "1STP"
+    ligand:
+      resname: "BTN"  # Biotin residue name
+      smiles: "C1=C(SC=N1)CCCCC(=O)NCCCC[C@@H](C(=O)O)N"  # Biotin SMILES
+    protein:
+      chain: "A"
+      remove_ligands: ["BTN"]
+    binding_site:
+      # Centered on biotin binding pocket
+      center_x: 22.5
+      center_y: 4.0
+      center_z: 24.0
+      size_x: 20.0
+      size_y: 20.0
+      size_z: 20.0
+    expected_results:
+      rmsd_native: 0.0     # Reference for comparison
+      typical_affinity: -12.0  # Expected binding affinity (kcal/mol)
+      difficulty: "easy"   # Classification for benchmarking
+    notes: "Well-defined binding pocket, strong interaction, good for validation"
+
+  # HIV-1 Protease + Inhibitor
+  # Important drug target with known inhibitor
+  "1HVR":
+    name: "HIV-1 Protease + Ritonavir"
+    description: "HIV-1 protease with ritonavir inhibitor"
+    pdb_id: "1HVR"
+    ligand:
+      resname: "RIT"  # Ritonavir
+      smiles: "CC(C)C1=NC(=CS1)CN(C)C(=O)N[C@@H](C(C)C)C(=O)N[C@@H](CC2=CC=CC=C2)C[C@H]([C@H](CC3=CC=CC=C3)NC(=O)OCc4cncs4)O"
+    protein:
+      chain: "A"
+      remove_ligands: ["RIT"]
+    binding_site:
+      center_x: 0.0
+      center_y: 0.0
+      center_z: 0.0
+      size_x: 25.0
+      size_y: 25.0
+      size_z: 25.0
+    expected_results:
+      typical_affinity: -10.5
+      difficulty: "medium"
+    notes: "Important drug target, flexible binding site"
+
+  # Dihydrofolate Reductase + Methotrexate
+  # Classic drug target system
+  "4DFR":
+    name: "DHFR-Methotrexate"
+    description: "Dihydrofolate reductase with methotrexate"
+    pdb_id: "4DFR"
+    ligand:
+      resname: "MTX"  # Methotrexate
+      smiles: "CN(CC1=CN=C2C(=N1)C(=NC(=N2)N)N)C3=CC=C(C=C3)C(=O)N[C@@H](CCC(=O)O)C(=O)O"
+    protein:
+      chain: "A"
+      remove_ligands: ["MTX"]
+    binding_site:
+      center_x: 21.0
+      center_y: 27.0
+      center_z: 28.0
+      size_x: 18.0
+      size_y: 18.0
+      size_z: 18.0
+    expected_results:
+      typical_affinity: -11.2
+      difficulty: "medium"
+    notes: "Classic enzyme-inhibitor complex, well-characterized binding mode"
+
+  # Trypsin + Benzamidine
+  # Simple, well-defined system
+  "3PTB":
+    name: "Trypsin-Benzamidine"
+    description: "Bovine trypsin with benzamidine inhibitor"
+    pdb_id: "3PTB"
+    ligand:
+      resname: "BEN"  # Benzamidine
+      smiles: "C1=CC=C(C=C1)C(=N)N"  # Simple benzamidine
+    protein:
+      chain: ""  # Main chain (no chain ID specified)
+      remove_ligands: ["BEN"]
+    binding_site:
+      center_x: -5.0
+      center_y: 18.0
+      center_z: 16.0
+      size_x: 15.0
+      size_y: 15.0
+      size_z: 15.0
+    expected_results:
+      typical_affinity: -6.5
+      difficulty: "easy"
+    notes: "Simple system, well-defined binding pocket, good for basic validation"
+
+  # Estrogen Receptor + Estradiol
+  # Hormone receptor system
+  "1ERE":
+    name: "Estrogen Receptor-Estradiol"
+    description: "Estrogen receptor with estradiol"
+    pdb_id: "1ERE"
+    ligand:
+      resname: "EST"  # Estradiol
+      smiles: "C[C@]12CC[C@H]3[C@H]([C@@H]1CCC2O)CCC4=C3C=CC(=C4)O"
+    protein:
+      chain: "A"
+      remove_ligands: ["EST"]
+    binding_site:
+      center_x: 23.0
+      center_y: 4.0
+      center_z: 20.0
+      size_x: 20.0
+      size_y: 20.0
+      size_z: 20.0
+    expected_results:
+      typical_affinity: -9.8
+      difficulty: "medium"
+    notes: "Hormone receptor, important for understanding selectivity"
+
+# Performance tracking
+performance_targets:
+  pr_benchmark_time: 300     # Max 5 minutes for PR benchmarks
+  nightly_benchmark_time: 1800  # Max 30 minutes for full suite
+  memory_limit_mb: 2048      # Memory limit for benchmarks
+  
+# Reporting settings
+reporting:
+  generate_plots: true       # Generate RMSD/affinity plots
+  save_structures: true      # Save best poses as SDF
+  comparison_baseline: "previous_run"  # Compare against previous results
+  alert_thresholds:
+    rmsd_regression: 1.0     # Alert if RMSD increases by > 1.0 Å
+    affinity_regression: 2.0 # Alert if affinity changes by > 2.0 kcal/mol

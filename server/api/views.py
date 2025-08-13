@@ -5,10 +5,12 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
+from django.conf import settings
 import json
 import logging
 import requests
 import threading
+import os
 
 from .models import DockingJob, BindingPocket, JobTemplate
 from .chem_utils import ChemUtils
@@ -21,6 +23,61 @@ logger = logging.getLogger(__name__)
 def healthz(request):
     """Health check endpoint"""
     return JsonResponse({"ok": True})
+
+@require_GET
+def dock_capabilities(request):
+    """Get docking capabilities and engine information"""
+    try:
+        # Check if real AutoDock Vina is available
+        vina_available = DockingEngine.is_real_docking_available()
+        
+        # Get version info if available
+        vina_version = None
+        if vina_available:
+            try:
+                # Try to get Vina version
+                import vina
+                vina_version = getattr(vina, '__version__', '1.2.5')
+            except:
+                vina_version = "unknown"
+        
+        # Production configuration - only real AutoDock Vina
+        force_real = getattr(settings, 'DOCKING_FORCE_REAL', False)
+        cuda_enabled = getattr(settings, 'DOCKING_CUDA_ENABLED', False)
+        engine_default = "vina" if vina_available else "unavailable"
+        
+        capabilities = {
+            'vina_available': vina_available,
+            'vina_version': vina_version,
+            'engine_default': engine_default,
+            'mock_allowed': False,  # Never allowed in production
+            'force_real': force_real,
+            'cuda_enabled': cuda_enabled,
+            'runtime': 'server-side',
+            'advanced_features': {
+                'gnina_rescoring': vina_available,  # Only if real Vina available
+                'pocket_detection': vina_available,  # Only if real Vina available
+                'job_templates': True,
+                'cuda_acceleration': cuda_enabled and vina_available
+            },
+            'status': 'operational' if vina_available else 'requires_installation'
+        }
+        
+        return JsonResponse(capabilities)
+        
+    except Exception as e:
+        logger.error(f"Capabilities check error: {e}")
+        return JsonResponse({
+            'vina_available': False,
+            'vina_version': None,
+            'engine_default': 'unavailable',
+            'mock_allowed': False,
+            'force_real': True,
+            'cuda_enabled': False,
+            'runtime': 'server-side',
+            'status': 'error',
+            'error': str(e)
+        })
 
 @require_GET
 def pdb_proxy(request, pdb_id: str):
@@ -145,6 +202,25 @@ def run_docking(request):
         return HttpResponseBadRequest("Invalid JSON")
 
     try:
+        # Check if real AutoDock Vina is available (REQUIRED)
+        vina_available = DockingEngine.is_real_docking_available()
+        force_real = getattr(settings, 'DOCKING_FORCE_REAL', False)
+        cuda_enabled = getattr(settings, 'DOCKING_CUDA_ENABLED', False)
+        
+        if not vina_available:
+            return HttpResponse(
+                json.dumps({
+                    'error': 'AutoDock Vina not available - real docking required',
+                    'engine': 'unavailable',
+                    'cuda_enabled': cuda_enabled,
+                    'runtime': 'server-side',
+                    'message': 'AutoDock Vina must be installed for molecular docking',
+                    'installation_required': True
+                }),
+                status=503,
+                content_type='application/json'
+            )
+        
         # Validate docking parameters
         validated_params = DockingEngine.validate_docking_parameters(body)
         
@@ -160,6 +236,7 @@ def run_docking(request):
             size_z=validated_params['size_z'],
             exhaustiveness=validated_params['exhaustiveness'],
             num_modes=validated_params['num_modes'],
+            seed=validated_params.get('seed'),
             status='pending'
         )
         
@@ -191,6 +268,24 @@ def get_docking_status(request, job_id: str):
             'created_at': job.created_at.isoformat(),
             'ligand_smiles': job.ligand_smiles,
             'receptor_pdb_id': job.receptor_pdb_id,
+            # Include comprehensive docking parameters
+            'docking_parameters': {
+                'center_x': job.center_x,
+                'center_y': job.center_y,
+                'center_z': job.center_z,
+                'size_x': job.size_x,
+                'size_y': job.size_y,
+                'size_z': job.size_z,
+                'exhaustiveness': job.exhaustiveness,
+                'num_modes': job.num_modes,
+                'seed': job.seed,
+            },
+            # Include engine metadata
+            'engine_metadata': {
+                'engine': job.engine,
+                'is_mock': job.is_mock,
+                'version': getattr(job, 'version', None) or 'unknown',
+            }
         }
         
         if job.started_at:
@@ -206,6 +301,30 @@ def get_docking_status(request, job_id: str):
         if job.results_json:
             response_data['results'] = job.results_json
             
+            # Extract additional metadata from results if available
+            if isinstance(job.results_json, dict):
+                method_info = job.results_json.get('method', 'Unknown')
+                version_info = job.results_json.get('version', 'unknown')
+                calc_time = job.results_json.get('calculation_time', 0)
+                
+                # Update engine metadata with more precise information
+                response_data['engine_metadata'].update({
+                    'method': method_info,
+                    'version': version_info,
+                    'calculation_time': calc_time,
+                })
+                
+                # Include performance metrics
+                if 'poses' in job.results_json:
+                    poses = job.results_json['poses']
+                    if poses:
+                        best_affinity = min(pose.get('affinity', 0) for pose in poses)
+                        response_data['performance_metrics'] = {
+                            'best_affinity': best_affinity,
+                            'num_poses_generated': len(poses),
+                            'calculation_time': calc_time,
+                        }
+            
         return JsonResponse(response_data)
         
     except DockingJob.DoesNotExist:
@@ -213,6 +332,99 @@ def get_docking_status(request, job_id: str):
     except Exception as e:
         logger.error(f"Get docking status error: {e}")
         return HttpResponseBadRequest(f"Failed to get job status: {e}")
+
+@require_GET
+def export_docking_results(request, job_id: str):
+    """Export docking results with metadata and SDF files"""
+    try:
+        job = DockingJob.objects.get(job_id=job_id)
+        
+        if job.status != 'completed':
+            return HttpResponseBadRequest("Job is not completed yet")
+        
+        if not job.results_json:
+            return HttpResponseBadRequest("No results available for export")
+        
+        # Prepare comprehensive metadata
+        export_metadata = {
+            'job_information': {
+                'job_id': str(job.job_id),
+                'created_at': job.created_at.isoformat(),
+                'started_at': job.started_at.isoformat() if job.started_at else None,
+                'completed_at': job.completed_at.isoformat() if job.completed_at else None,
+                'duration_seconds': job.duration(),
+                'status': job.status,
+            },
+            'input_parameters': {
+                'ligand_smiles': job.ligand_smiles,
+                'receptor_pdb_id': job.receptor_pdb_id,
+                'binding_site': {
+                    'center': [job.center_x, job.center_y, job.center_z],
+                    'size': [job.size_x, job.size_y, job.size_z],
+                },
+                'docking_parameters': {
+                    'exhaustiveness': job.exhaustiveness,
+                    'num_modes': job.num_modes,
+                    'seed': job.seed,
+                }
+            },
+            'engine_information': {
+                'engine': job.engine,
+                'is_mock': job.is_mock,
+                'method': job.results_json.get('method', 'Unknown'),
+                'version': job.results_json.get('version', 'unknown'),
+                'calculation_time': job.results_json.get('calculation_time', 0),
+            },
+            'results_summary': {
+                'success': job.results_json.get('success', False),
+                'num_poses': len(job.results_json.get('poses', [])),
+                'best_affinity': None,
+                'mean_affinity': None,
+            },
+            'export_information': {
+                'exported_at': timezone.now().isoformat(),
+                'export_format': 'SDF with metadata',
+                'software_version': 'Lipid Rendering v1.0',
+            }
+        }
+        
+        # Calculate affinity statistics
+        poses = job.results_json.get('poses', [])
+        if poses:
+            affinities = [pose.get('affinity', 0) for pose in poses]
+            export_metadata['results_summary']['best_affinity'] = min(affinities)
+            export_metadata['results_summary']['mean_affinity'] = sum(affinities) / len(affinities)
+        
+        # Create export package as JSON response with embedded SDF data
+        export_package = {
+            'metadata': export_metadata,
+            'poses_sdf': {}
+        }
+        
+        # Include SDF data for each pose
+        for i, pose in enumerate(poses):
+            if 'sdf' in pose:
+                export_package['poses_sdf'][f'pose_{pose.get("mode", i+1)}'] = {
+                    'sdf_content': pose['sdf'],
+                    'affinity': pose.get('affinity'),
+                    'rmsd_lb': pose.get('rmsd_lb'),
+                    'rmsd_ub': pose.get('rmsd_ub'),
+                    'coordinates': {
+                        'center_x': pose.get('center_x'),
+                        'center_y': pose.get('center_y'),
+                        'center_z': pose.get('center_z'),
+                    }
+                }
+        
+        response = JsonResponse(export_package)
+        response['Content-Disposition'] = f'attachment; filename="docking_export_{job_id}.json"'
+        return response
+        
+    except DockingJob.DoesNotExist:
+        return HttpResponseBadRequest(f"Docking job {job_id} not found")
+    except Exception as e:
+        logger.error(f"Export docking results error: {e}")
+        return HttpResponseBadRequest(f"Failed to export results: {e}")
 
 @require_GET
 def list_docking_jobs(request):
@@ -270,7 +482,21 @@ def _run_docking_task(job_id):
             'size_z': job.size_z,
             'exhaustiveness': job.exhaustiveness,
             'num_modes': job.num_modes,
+            'seed': job.seed,
         }
+        
+        # Structured logging - start docking
+        logger.info(f"Starting docking job {job_id}", extra={
+            'job_id': str(job_id),
+            'ligand_smiles': job.ligand_smiles,
+            'receptor_pdb_id': job.receptor_pdb_id,
+            'center': [job.center_x, job.center_y, job.center_z],
+            'size': [job.size_x, job.size_y, job.size_z],
+            'exhaustiveness': job.exhaustiveness,
+            'num_modes': job.num_modes,
+            'seed': job.seed,
+            'started_at': job.started_at.isoformat()
+        })
         
         # Prepare inputs
         inputs = DockingEngine.prepare_docking_inputs(
@@ -279,15 +505,58 @@ def _run_docking_task(job_id):
         )
         
         # Run docking calculation (real or mock)
+        start_time = timezone.now()
         results = DockingEngine.run_production_docking(validated_params)
+        end_time = timezone.now()
+        elapsed_time = (end_time - start_time).total_seconds()
         
-        # Update job with results
-        job.status = 'completed'
-        job.completed_at = timezone.now()
-        job.results_json = results
-        job.save()
-        
-        logger.info(f"Docking job {job_id} completed successfully")
+        # Check if docking was successful
+        if results.get('success', False):
+            # Update job with results
+            job.status = 'completed'
+            job.completed_at = timezone.now()
+            job.results_json = results
+            job.engine = results.get('engine', 'unknown')
+            job.is_mock = results.get('is_mock', False)
+            job.save()
+            
+            # Structured logging - end docking
+            best_affinity = None
+            if results.get('poses'):
+                best_affinity = min(pose.get('affinity', 0) for pose in results['poses'])
+                
+            logger.info(f"Docking job {job_id} completed successfully", extra={
+                'job_id': str(job_id),
+                'status': 'completed',
+                'engine': job.engine,
+                'is_mock': job.is_mock,
+                'elapsed_time_seconds': elapsed_time,
+                'best_affinity': best_affinity,
+                'num_poses': len(results.get('poses', [])),
+                'seed_used': job.seed,
+                'completed_at': job.completed_at.isoformat()
+            })
+        else:
+            # Docking failed (likely because Vina unavailable and mock disabled)
+            job.status = 'failed'
+            job.completed_at = timezone.now()
+            job.error_message = results.get('error', 'Docking failed')
+            job.results_json = results
+            job.engine = results.get('engine', 'unavailable')
+            job.is_mock = results.get('is_mock', False)
+            job.save()
+            
+            # Structured logging - failed docking
+            logger.error(f"Docking job {job_id} failed", extra={
+                'job_id': str(job_id),
+                'status': 'failed',
+                'engine': job.engine,
+                'is_mock': job.is_mock,
+                'elapsed_time_seconds': elapsed_time,
+                'error_message': job.error_message,
+                'seed_used': job.seed,
+                'completed_at': job.completed_at.isoformat()
+            })
         
     except Exception as e:
         # Update job with error

@@ -1,13 +1,14 @@
 from django.urls import path
 from .views import (
-    healthz, pdb_proxy, get_protein_info, prepare_ligand, prepare_receptor,
-    estimate_binding_site, run_docking, get_docking_status, list_docking_jobs,
+    healthz, dock_capabilities, pdb_proxy, get_protein_info, prepare_ligand, prepare_receptor,
+    estimate_binding_site, run_docking, get_docking_status, export_docking_results, list_docking_jobs,
     detect_binding_pockets, rescore_poses, run_advanced_docking, 
     list_job_templates, get_pocket_list
 )
 
 urlpatterns = [
     path('healthz', healthz, name='healthz'),
+    path('dock/capabilities', dock_capabilities, name='dock-capabilities'),
     path('pdb/<str:pdb_id>', pdb_proxy, name='pdb-proxy'),
     path('pdb/<str:pdb_id>/info', get_protein_info, name='get-protein-info'),
     path('ligand/prepare', prepare_ligand, name='prepare-ligand'),
@@ -15,6 +16,7 @@ urlpatterns = [
     path('binding-site/estimate', estimate_binding_site, name='estimate-binding-site'),
     path('dock/run', run_docking, name='run-docking'),
     path('dock/status/<str:job_id>', get_docking_status, name='get-docking-status'),
+    path('dock/export/<str:job_id>', export_docking_results, name='export-docking-results'),
     path('dock/jobs', list_docking_jobs, name='list-docking-jobs'),
     
     # Advanced Features

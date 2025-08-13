@@ -21,12 +21,15 @@ class DockingEngine:
     @staticmethod
     def is_real_docking_available() -> bool:
         """Check if real docking software is available"""
-        return REAL_DOCKING_AVAILABLE
+        if REAL_DOCKING_AVAILABLE:
+            from .real_docking_engine import RealDockingEngine
+            return RealDockingEngine.is_available()
+        return False
     
     @staticmethod
     def validate_docking_parameters(params: Dict[str, Any]) -> Dict[str, Any]:
         """Validate docking parameters using real or mock implementation"""
-        if REAL_DOCKING_AVAILABLE:
+        if DockingEngine.is_real_docking_available():
             logger.info("Using real docking parameter validation")
             return RealDockingUtils.validate_docking_parameters(params)
         else:
@@ -78,19 +81,59 @@ class DockingEngine:
         validated['exhaustiveness'] = max(1, min(32, int(params.get('exhaustiveness', 8))))
         validated['num_modes'] = max(1, min(20, int(params.get('num_modes', 9))))
         
+        # Seed parameter for reproducibility
+        seed = params.get('seed')
+        if seed is not None:
+            try:
+                seed_val = int(seed)
+            except (ValueError, TypeError):
+                raise ValueError("Seed must be an integer")
+            
+            if seed_val < 0:
+                raise ValueError("Seed must be a non-negative integer")
+            validated['seed'] = seed_val
+        else:
+            # Default seed behavior - can be None for auto-random or a fixed value
+            validated['seed'] = None  # None means auto-random
+        
         return validated
     
     @staticmethod
     def run_production_docking(validated_params: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Run production docking using real or mock implementation
+        Run production docking using ONLY real AutoDock Vina - NO MOCK ALLOWED
         """
-        if REAL_DOCKING_AVAILABLE:
-            logger.info("Running real AutoDock Vina docking")
-            return RealDockingUtils.run_production_docking(validated_params)
+        from django.conf import settings
+        
+        # Check for force real setting
+        force_real = getattr(settings, 'DOCKING_FORCE_REAL', False)
+        cuda_enabled = getattr(settings, 'DOCKING_CUDA_ENABLED', False)
+        
+        # Add CUDA preference to parameters
+        validated_params['cuda_enabled'] = cuda_enabled
+        
+        if DockingEngine.is_real_docking_available():
+            logger.info(f"Running real AutoDock Vina docking (CUDA: {cuda_enabled})")
+            result = RealDockingUtils.run_production_docking(validated_params)
+            # Add engine metadata
+            result['engine'] = 'vina'
+            result['is_mock'] = False
+            result['cuda_enabled'] = cuda_enabled
+            result['runtime'] = 'server-side'
+            return result
         else:
-            logger.warning("Real docking not available, using mock implementation")
-            return DockingEngine.run_mock_docking(validated_params)
+            # Real docking required but not available
+            logger.error("AutoDock Vina not available - REAL DOCKING REQUIRED")
+            return {
+                'success': False,
+                'error': 'AutoDock Vina not available - real docking required',
+                'engine': 'unavailable',
+                'is_mock': False,
+                'cuda_enabled': False,
+                'runtime': 'server-side',
+                'message': 'AutoDock Vina must be installed. Mock docking is disabled.',
+                'installation_required': True
+            }
     
     @staticmethod
     def prepare_docking_inputs(ligand_smiles: str, receptor_pdb_id: str) -> Dict[str, Any]:
@@ -113,6 +156,14 @@ class DockingEngine:
         Mock implementation of AutoDock Vina docking.
         In a real implementation, this would call actual docking software.
         """
+        
+        # Set random seed if provided for reproducible mock results
+        seed = validated_params.get('seed')
+        if seed is not None:
+            random.seed(seed)
+            logger.info(f"Mock docking using deterministic seed: {seed}")
+        else:
+            logger.info("Mock docking using random seed (nondeterministic)")
         
         # Simulate docking calculation time (2-5 seconds)
         calc_time = random.uniform(2.0, 5.0)
@@ -149,7 +200,7 @@ class DockingEngine:
                 'center_z': round(pose_z, 3),
                 # In real implementation, this would be actual molecular coordinates
                 'coordinates': f"MOCK_POSE_{i+1}_COORDINATES",
-                'sdf': f"MOCK_SDF_POSE_{i+1}"
+                'sdf': DockingEngine._create_mock_sdf(i + 1, pose_x, pose_y, pose_z)
             })
         
         # Sort by affinity (best first)
@@ -171,10 +222,37 @@ class DockingEngine:
                 'version': '1.2.0 (simulated)'
             },
             'parameters': validated_params,
-            'timestamp': time.time()
+            'timestamp': time.time(),
+            'seed_used': seed
         }
         
         return results
+    
+    @staticmethod
+    def _create_mock_sdf(pose_number: int, center_x: float, center_y: float, center_z: float) -> str:
+        """Create a mock SDF for testing purposes"""
+        # Create a simple mock molecule (e.g., ethanol) positioned at the given coordinates
+        return f"""Mock Docked Pose {pose_number}
+  Generated by Mock AutoDock Vina
+
+  8  7  0  0  0  0  0  0  0  0999 V2000
+{center_x:10.4f}{center_y:10.4f}{center_z:10.4f} C   0  0  0  0  0  0  0  0  0  0  0  0
+{center_x+1.0:10.4f}{center_y:10.4f}{center_z:10.4f} C   0  0  0  0  0  0  0  0  0  0  0  0
+{center_x+2.0:10.4f}{center_y:10.4f}{center_z:10.4f} O   0  0  0  0  0  0  0  0  0  0  0  0
+{center_x:10.4f}{center_y+1.0:10.4f}{center_z:10.4f} H   0  0  0  0  0  0  0  0  0  0  0  0
+{center_x:10.4f}{center_y-1.0:10.4f}{center_z:10.4f} H   0  0  0  0  0  0  0  0  0  0  0  0
+{center_x+1.0:10.4f}{center_y+1.0:10.4f}{center_z:10.4f} H   0  0  0  0  0  0  0  0  0  0  0  0
+{center_x+1.0:10.4f}{center_y-1.0:10.4f}{center_z:10.4f} H   0  0  0  0  0  0  0  0  0  0  0  0
+{center_x+2.0:10.4f}{center_y+1.0:10.4f}{center_z:10.4f} H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  2  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+  2  6  1  0  0  0  0
+  2  7  1  0  0  0  0
+  3  8  1  0  0  0  0
+M  END
+$$$$"""
     
     @staticmethod
     def estimate_binding_site_auto(receptor_pdb_id: str, ligand_smiles: str = None) -> Dict[str, Any]:

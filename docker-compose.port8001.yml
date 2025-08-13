@@ -1,0 +1,24 @@
+services:
+  app-test-8001:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.simple
+    ports:
+      - "8001:8000"  # Use different port
+    environment:
+      - DEBUG=True
+      - DJANGO_SETTINGS_MODULE=core.settings_ci
+      - DOCKING_ALLOW_MOCK=True
+    volumes:
+      - ./lipid_viewer/dist:/app/staticfiles/frontend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/healthz', timeout=10)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  default:
+    name: lipid-docking-8001-network

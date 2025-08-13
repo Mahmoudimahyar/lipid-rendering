@@ -1,0 +1,73 @@
+# Production Dockerfile with AutoDock Vina via pip (more reliable than conda)
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    DJANGO_SETTINGS_MODULE=core.settings \
+    DEBUG=True
+
+WORKDIR /app
+
+# Install system dependencies for scientific packages
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    wget \
+    curl \
+    libboost-all-dev \
+    pkg-config \
+    python3-dev \
+    gcc \
+    g++ \
+    gfortran \
+    libatlas-base-dev \
+    liblapack-dev \
+    libblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies (including scientific packages)
+COPY server/requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip setuptools wheel
+
+# Install scientific packages with compatible versions for Python 3.11
+RUN pip install numpy scipy pandas
+
+# Install AutoDock Vina Python binding
+RUN pip install vina || echo "Vina installation failed, continuing..."
+
+# Try to install RDKit (fallback if it fails)
+RUN pip install rdkit || pip install rdkit-pypi || echo "RDKit installation failed, continuing..."
+
+# Install remaining requirements
+RUN pip install -r requirements.txt
+
+# Copy Django application
+COPY server/ /app
+
+# Copy pre-built React frontend
+COPY lipid_viewer/dist/ /app/staticfiles/frontend/
+
+# Create directory for static files
+RUN mkdir -p /app/staticfiles
+
+# Collect static files
+RUN python manage.py collectstatic --noinput
+
+# Create templates directory and copy the correct index.html
+RUN mkdir -p /app/templates && cp /app/staticfiles/frontend/index.html /app/templates/
+
+# Create non-root user for security
+RUN adduser --disabled-password --gecos '' appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/api/healthz', timeout=10)" || exit 1
+
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

@@ -36,7 +36,10 @@ class TestDeterministicLigandPreparation(TestCase):
     @patch('api.real_docking_engine.SCIENTIFIC_LIBS_AVAILABLE', True)
     def test_smiles_parsing_and_standardization(self):
         """Test SMILES parsing and standardization"""
-        from rdkit import Chem
+        try:
+            from rdkit import Chem
+        except Exception:
+            self.skipTest('RDKit not available for SMILES parsing validation')
         
         engine = RealDockingEngine()
         
@@ -56,7 +59,10 @@ class TestDeterministicLigandPreparation(TestCase):
     @patch('api.real_docking_engine.SCIENTIFIC_LIBS_AVAILABLE', True)
     def test_deterministic_hydrogen_addition(self):
         """Test deterministic hydrogen addition"""
-        from rdkit import Chem
+        try:
+            from rdkit import Chem
+        except Exception:
+            self.skipTest('RDKit not available for hydrogen addition validation')
         
         engine = RealDockingEngine()
         mol = Chem.MolFromSmiles(self.test_smiles)
@@ -74,8 +80,11 @@ class TestDeterministicLigandPreparation(TestCase):
     @patch('api.real_docking_engine.SCIENTIFIC_LIBS_AVAILABLE', True)
     def test_deterministic_3d_generation(self):
         """Test deterministic 3D coordinate generation"""
-        from rdkit import Chem
-        from rdkit.Chem import AllChem
+        try:
+            from rdkit import Chem
+            from rdkit.Chem import AllChem
+        except Exception:
+            self.skipTest('RDKit not available for 3D coordinate validation')
         
         engine = RealDockingEngine()
         mol = Chem.MolFromSmiles(self.test_smiles)
@@ -105,7 +114,10 @@ class TestDeterministicLigandPreparation(TestCase):
     @patch('api.real_docking_engine.SCIENTIFIC_LIBS_AVAILABLE', True)
     def test_different_seeds_different_coordinates(self):
         """Test that different seeds produce different coordinates"""
-        from rdkit import Chem
+        try:
+            from rdkit import Chem
+        except Exception:
+            self.skipTest('RDKit not available for coordinate seed validation')
         
         engine = RealDockingEngine()
         mol = Chem.MolFromSmiles(self.complex_smiles)  # Use more complex molecule
@@ -136,8 +148,11 @@ class TestDeterministicLigandPreparation(TestCase):
     @patch('api.real_docking_engine.SCIENTIFIC_LIBS_AVAILABLE', True)
     def test_mmff_geometry_optimization(self):
         """Test MMFF geometry optimization"""
-        from rdkit import Chem
-        from rdkit.Chem import AllChem
+        try:
+            from rdkit import Chem
+            from rdkit.Chem import AllChem
+        except Exception:
+            self.skipTest('RDKit not available for MMFF optimization validation')
         
         engine = RealDockingEngine()
         mol = Chem.MolFromSmiles(self.test_smiles)
@@ -156,8 +171,11 @@ class TestDeterministicLigandPreparation(TestCase):
     @patch('api.real_docking_engine.SCIENTIFIC_LIBS_AVAILABLE', True)
     def test_ligand_sdf_with_metadata(self):
         """Test ligand SDF writing with comprehensive metadata"""
-        from rdkit import Chem
-        from rdkit.Chem import AllChem
+        try:
+            from rdkit import Chem
+            from rdkit.Chem import AllChem
+        except Exception:
+            self.skipTest('RDKit not available for SDF metadata validation')
         
         engine = RealDockingEngine()
         mol = Chem.MolFromSmiles(self.test_smiles)
@@ -315,7 +333,10 @@ class TestFullDeterministicPipeline(TestCase):
     @patch('api.real_docking_engine.SCIENTIFIC_LIBS_AVAILABLE', True)
     def test_preparation_pipeline_deterministic(self):
         """Test that preparation pipeline is deterministic"""
-        from rdkit import Chem
+        try:
+            from rdkit import Chem
+        except Exception:
+            self.skipTest('RDKit not available for full preparation pipeline validation')
         
         # Mock the scientific libraries to avoid import errors
         with patch('rdkit.Chem.MolFromSmiles') as mock_mol_from_smiles:

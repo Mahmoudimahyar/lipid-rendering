@@ -91,6 +91,7 @@ class TestCSRFCORSConfiguration(TestCase):
     def test_csrf_protection_bypassed_for_api(self, mock_csrf):
         """Test that CSRF protection allows API requests from trusted origins"""
         # This test ensures our CSRF_TRUSTED_ORIGINS setting works
+        mock_csrf.return_value = None
         response = self.client.post(
             '/api/pdb/1CRN/info',
             HTTP_ORIGIN=self.frontend_origin

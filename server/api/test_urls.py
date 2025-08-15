@@ -67,7 +67,8 @@ class TestURLRouting(TestCase):
         response = self.client.get('/api/healthz')
         self.assertEqual(response.status_code, 200)
         data = json.loads(response.content)
-        self.assertIn('status', data)
+        # Health payload must indicate ok; some deployments may include extra fields
+        self.assertIn('ok', data)
 
     def test_admin_url_exists(self):
         """Test admin URL exists (even if login required)"""

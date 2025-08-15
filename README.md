@@ -1,15 +1,18 @@
-# 🧬 Lipid Rendering - Molecular Docking Platform
+# 🧬 Lipid Rendering - A Specialized Platform for Lipid-Protein Docking
 
-A production-ready web application for molecular docking using AutoDock Vina with real-time 3D visualization.
+This production-ready web application is designed for studying the interactions between lipids and immune-related proteins through molecular docking. It integrates AutoDock Vina for high-precision docking calculations and provides real-time 3D visualization to analyze the results.
+
+The platform's primary goal is to facilitate in-silico testing of various lipids, particularly ionizable lipids, to understand their potential effects on the immune system. By testing the docking mechanisms of different lipids against a wide range of immune-related proteins, researchers can gain insights into the pathways these lipids may activate upon entering the body.
 
 ## 🚀 **Key Features**
 
-- **Real AutoDock Vina Integration**: Production molecular docking (no mock/simulation)
-- **CUDA GPU Acceleration**: Optimized for high-performance computing
-- **React Frontend**: Modern, responsive 3D molecular visualization
-- **Django REST API**: Robust backend with job management
-- **AWS Ready**: Docker containers optimized for cloud deployment
-- **Scientific Libraries**: RDKit, OpenMM, BioPython integration
+- **Specialized Lipid-Protein Docking**: Focused on analyzing the interactions between lipids and immune-related proteins.
+- **Real AutoDock Vina Integration**: Production-level molecular docking for accurate scientific results.
+- **CUDA GPU Acceleration**: Optimized for high-performance computing to accelerate docking calculations.
+- **Interactive 2D/3D Visualization**: A modern React frontend for real-time, high-quality rendering of molecular structures.
+- **Robust Django REST API**: A powerful backend for managing docking jobs and processing data.
+- **Scalable and Cloud-Ready**: Docker containers optimized for deployment on AWS, ready to handle large-scale testing across numerous proteins.
+- **Comprehensive Scientific Stack**: Integrates key scientific libraries such as RDKit, OpenMM, and BioPython.
 
 ---
 

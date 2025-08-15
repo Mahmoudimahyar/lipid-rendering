@@ -21,6 +21,7 @@ from django.shortcuts import redirect
 from django.views.generic import TemplateView
 from django.conf import settings
 from django.conf.urls.static import static
+from django.views.static import serve as static_serve
 from django.views.decorators.cache import never_cache
 from django.utils.decorators import method_decorator
 import os
@@ -39,7 +40,7 @@ def api_info_view(request):
             'pocket_detection': '/api/pockets/detect',
             'templates': '/api/templates',
             'admin': '/admin/',
-            'frontend': '/' # Now served from the same server
+            'frontend': '/'
         },
         'status': 'running',
         'features': [
@@ -52,6 +53,11 @@ def api_info_view(request):
         ]
     })
 
+def root_view(request):
+    """Serve React app at root for single-server setup."""
+    # Delegate to ReactAppView's template
+    from django.shortcuts import render
+    return render(request, 'index.html')
 @method_decorator(never_cache, name='dispatch')
 class ReactAppView(TemplateView):
     """
@@ -84,8 +90,18 @@ urlpatterns = [
 # Serve static files (including assets at /assets/ path for React compatibility)
 # These must come BEFORE the catch-all React route
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
-urlpatterns += static('/assets/', document_root=os.path.join(str(settings.STATIC_ROOT), 'frontend', 'assets'))
+# Explicit /assets route for Vite-built files (ensure proper MIME type in production)
+urlpatterns += [
+    re_path(r'^assets/(?P<path>.*)$', static_serve, {
+        'document_root': os.path.join(str(settings.STATIC_ROOT), 'frontend', 'assets')
+    }),
+]
 
 # React app routes (catch-all for SPA routing)
 # This must be last to catch all non-API/static routes
-urlpatterns += [re_path(r'^.*$', ReactAppView.as_view(), name='react-app')]
+urlpatterns += [
+    # Root serves the React SPA
+    path('', ReactAppView.as_view(), name='root'),
+    # Catch-all SPA routes, but exclude static and asset paths so they don't get index.html
+    re_path(r'^(?!(api/|assets/|static/)).*$' , ReactAppView.as_view(), name='react-app')
+]

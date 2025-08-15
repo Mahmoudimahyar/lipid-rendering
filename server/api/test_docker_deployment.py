@@ -8,6 +8,17 @@ import time
 import requests
 import pytest
 from django.test import TestCase
+from pathlib import Path
+import os
+
+
+def _resolve_path_relative_to_repo(*parts) -> str:
+    repo_root = Path(__file__).resolve().parents[2]
+    return str(repo_root.joinpath(*parts))
+
+def _resolve_server_path(*parts) -> str:
+    repo_root = Path(__file__).resolve().parents[2]
+    return str(repo_root.joinpath('server', *parts))
 from unittest.mock import patch, MagicMock
 
 
@@ -16,8 +27,9 @@ class TestDockerConfiguration(TestCase):
 
     def test_dockerfile_exists_and_valid(self):
         """Test that Dockerfile exists and contains required instructions"""
-        import os
-        dockerfile_path = os.path.join(os.path.dirname(__file__), '../../Dockerfile')
+        dockerfile_path = _resolve_server_path('Dockerfile')
+        if not Path(dockerfile_path).exists():
+            dockerfile_path = _resolve_path_relative_to_repo('Dockerfile')
         
         self.assertTrue(os.path.exists(dockerfile_path), "Dockerfile not found")
         
@@ -26,6 +38,8 @@ class TestDockerConfiguration(TestCase):
         
         # Check for essential Docker instructions
         required_instructions = [
+            'FROM node:',
+            'as frontend-builder',
             'FROM python:3.13-slim',
             'WORKDIR /app',
             'COPY requirements.txt',
@@ -40,8 +54,7 @@ class TestDockerConfiguration(TestCase):
 
     def test_dockerfile_security_best_practices(self):
         """Test that Dockerfile follows security best practices"""
-        import os
-        dockerfile_path = os.path.join(os.path.dirname(__file__), '../../Dockerfile')
+        dockerfile_path = _resolve_server_path('Dockerfile')
         
         with open(dockerfile_path, 'r') as f:
             content = f.read()
@@ -54,10 +67,8 @@ class TestDockerConfiguration(TestCase):
 
     def test_docker_compose_exists_and_valid(self):
         """Test that docker-compose.yml exists and is valid"""
-        import os
         import yaml
-        
-        compose_path = os.path.join(os.path.dirname(__file__), '../../../docker-compose.yml')
+        compose_path = _resolve_path_relative_to_repo('docker-compose.yml')
         
         self.assertTrue(os.path.exists(compose_path), "docker-compose.yml not found")
         
@@ -78,9 +89,7 @@ class TestDockerConfiguration(TestCase):
 
     def test_requirements_includes_production_dependencies(self):
         """Test that requirements.txt includes production dependencies"""
-        import os
-        
-        req_path = os.path.join(os.path.dirname(__file__), '../../requirements.txt')
+        req_path = _resolve_server_path('requirements.txt')
         
         with open(req_path, 'r') as f:
             requirements = f.read()
@@ -112,14 +121,13 @@ class TestDockerBuildProcess(TestCase):
         ]
         
         # This tests the command structure without actually running Docker
-        self.assertEqual(len(build_cmd), 6)
+        self.assertEqual(len(build_cmd), 7)
         self.assertEqual(build_cmd[0], 'docker')
         self.assertEqual(build_cmd[1], 'build')
 
     def test_dockerfile_multi_stage_build(self):
         """Test that Dockerfile uses multi-stage build for efficiency"""
-        import os
-        dockerfile_path = os.path.join(os.path.dirname(__file__), '../../Dockerfile')
+        dockerfile_path = _resolve_server_path('Dockerfile')
         
         with open(dockerfile_path, 'r') as f:
             content = f.read()
@@ -132,8 +140,7 @@ class TestDockerBuildProcess(TestCase):
 
     def test_dockerfile_static_file_handling(self):
         """Test that Dockerfile properly handles static files"""
-        import os
-        dockerfile_path = os.path.join(os.path.dirname(__file__), '../../Dockerfile')
+        dockerfile_path = _resolve_server_path('Dockerfile')
         
         with open(dockerfile_path, 'r') as f:
             content = f.read()
@@ -170,8 +177,7 @@ class TestContainerRuntime(TestCase):
 
     def test_port_exposure_configuration(self):
         """Test that container properly exposes the correct port"""
-        import os
-        dockerfile_path = os.path.join(os.path.dirname(__file__), '../../Dockerfile')
+        dockerfile_path = _resolve_server_path('Dockerfile')
         
         with open(dockerfile_path, 'r') as f:
             content = f.read()
@@ -180,8 +186,7 @@ class TestContainerRuntime(TestCase):
 
     def test_health_check_configuration(self):
         """Test health check configuration"""
-        import os
-        dockerfile_path = os.path.join(os.path.dirname(__file__), '../../Dockerfile')
+        dockerfile_path = _resolve_server_path('Dockerfile')
         
         with open(dockerfile_path, 'r') as f:
             content = f.read()
@@ -194,15 +199,18 @@ class TestContainerRuntime(TestCase):
 
     def test_gunicorn_production_server_configuration(self):
         """Test Gunicorn server configuration for production"""
-        import os
-        dockerfile_path = os.path.join(os.path.dirname(__file__), '../../Dockerfile')
+        dockerfile_path = _resolve_server_path('Dockerfile')
         
         with open(dockerfile_path, 'r') as f:
             content = f.read()
         
         # Check Gunicorn configuration
         self.assertIn('gunicorn', content, "Should use Gunicorn for production")
-        self.assertIn('--bind 0.0.0.0:8000', content, "Should bind to all interfaces")
+        # Accept both exec-form JSON array and shell string formats
+        self.assertTrue(
+            ('--bind 0.0.0.0:8000' in content) or ('"--bind", "0.0.0.0:8000"' in content),
+            "Should bind to all interfaces",
+        )
         self.assertIn('--workers', content, "Should configure worker processes")
         self.assertIn('core.wsgi:application', content, "Should reference Django WSGI app")
 
@@ -216,14 +224,13 @@ class TestDockerSingleServerIntegration(TestCase):
         from django.conf import settings
         
         # Check that settings are configured for container deployment
-        self.assertIn('whitenoise', settings.MIDDLEWARE)
+        self.assertTrue(any('whitenoise' in m for m in settings.MIDDLEWARE))
         self.assertEqual(settings.STATIC_URL, '/static/')
         self.assertIsNotNone(settings.STATIC_ROOT)
 
     def test_frontend_assets_copied_to_container(self):
         """Test that frontend assets are copied to container"""
-        import os
-        dockerfile_path = os.path.join(os.path.dirname(__file__), '../../Dockerfile')
+        dockerfile_path = _resolve_server_path('Dockerfile')
         
         with open(dockerfile_path, 'r') as f:
             content = f.read()
@@ -276,15 +283,15 @@ class TestDockerDeploymentScenarios(TestCase):
         # ALLOWED_HOSTS should be configured
         # Static files should be configured for production
         
-        self.assertIn('whitenoise', settings.MIDDLEWARE)
+        self.assertTrue(any('whitenoise' in m for m in settings.MIDDLEWARE))
         self.assertIsNotNone(settings.STATIC_ROOT)
 
     def test_development_vs_production_dockerfile_differences(self):
         """Test differences between development and production Dockerfiles"""
         import os
         
-        prod_dockerfile = os.path.join(os.path.dirname(__file__), '../../Dockerfile')
-        dev_dockerfile = os.path.join(os.path.dirname(__file__), '../../Dockerfile.dev')
+        prod_dockerfile = _resolve_server_path('Dockerfile')
+        dev_dockerfile = _resolve_server_path('Dockerfile.dev')
         
         # Both should exist
         self.assertTrue(os.path.exists(prod_dockerfile), "Production Dockerfile should exist")
@@ -303,7 +310,7 @@ class TestDockerDeploymentScenarios(TestCase):
     def test_container_security_configuration(self):
         """Test container security configuration"""
         import os
-        dockerfile_path = os.path.join(os.path.dirname(__file__), '../../Dockerfile')
+        dockerfile_path = _resolve_server_path('Dockerfile')
         
         with open(dockerfile_path, 'r') as f:
             content = f.read()
@@ -316,7 +323,7 @@ class TestDockerDeploymentScenarios(TestCase):
     def test_container_resource_optimization(self):
         """Test container resource optimization"""
         import os
-        dockerfile_path = os.path.join(os.path.dirname(__file__), '../../Dockerfile')
+        dockerfile_path = _resolve_server_path('Dockerfile')
         
         with open(dockerfile_path, 'r') as f:
             content = f.read()

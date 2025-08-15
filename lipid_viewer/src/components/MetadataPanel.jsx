@@ -33,25 +33,18 @@ function MetadataPanel({
 
   // Determine engine badge style and accessibility
   const getEngineBadgeStyle = () => {
-    if (engine_metadata.is_mock) {
-      return {
-        className: 'bg-red-100 text-red-800 border border-red-200',
-        text: 'MOCK (Demo Only)',
-        ariaLabel: 'Mock engine - demonstration mode only, not real docking',
-        icon: '⚠️'
-      }
-    } else if (engine_metadata.engine === 'vina') {
+    if (engine_metadata.engine === 'vina') {
       return {
         className: 'bg-green-100 text-green-800 border border-green-200',
         text: `AutoDock Vina ${engine_metadata.version || 'v1.2.5'}`,
-        ariaLabel: `Real AutoDock Vina engine version ${engine_metadata.version || '1.2.5'}`,
+        ariaLabel: `AutoDock Vina engine version ${engine_metadata.version || '1.2.5'}`,
         icon: '✅'
       }
     } else {
       return {
         className: 'bg-gray-100 text-gray-800 border border-gray-200',
         text: engine_metadata.engine || 'Unknown',
-        ariaLabel: `Unknown engine: ${engine_metadata.engine || 'not specified'}`,
+        ariaLabel: `Engine: ${engine_metadata.engine || 'not specified'}`,
         icon: '❓'
       }
     }
@@ -212,18 +205,6 @@ function MetadataPanel({
                 <div>
                   <dt className="font-medium text-gray-500">Calculation Time</dt>
                   <dd className="mt-1 text-gray-900">{formatDuration(engine_metadata.calculation_time)}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-gray-500">Mock Mode</dt>
-                  <dd className="mt-1">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                      engine_metadata.is_mock 
-                        ? 'bg-red-100 text-red-800' 
-                        : 'bg-green-100 text-green-800'
-                    }`}>
-                      {engine_metadata.is_mock ? 'Yes' : 'No'}
-                    </span>
-                  </dd>
                 </div>
               </dl>
             </div>

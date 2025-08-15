@@ -7,6 +7,10 @@ import MoleculeViewer from '../components/MoleculeViewer'
 import ViewControls from '../components/ViewControls'
 import DockingVisualization from '../components/DockingVisualization'
 import AdvancedDockingControls from '../components/AdvancedDockingControls'
+import ProteinSelector from '../components/ProteinSelector'
+import BindingSiteConfigurator from '../components/BindingSiteConfigurator'
+import DockingParameters from '../components/DockingParameters'
+import JobManager from '../components/JobManager'
 import MetadataPanel from '../components/MetadataPanel'
 import { DockingAPI } from '../utils/dockingApi'
 import { ConnectionHealthChecker } from '../utils/connectionTest'
@@ -36,6 +40,7 @@ function DockingPage() {
   const [jobMetadata, setJobMetadata] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
   const [activeTab, setActiveTab] = useState('ligand') // 'ligand', 'docking', 'advanced', 'metadata'
+  const [dockParams, setDockParams] = useState({ exhaustiveness: 8, num_modes: 9, seed: null })
   
   // Connection health state
   const [backendConnected, setBackendConnected] = useState(true)
@@ -147,8 +152,9 @@ function DockingPage() {
       size_x: parseFloat(sizeXRef.current?.value || 20),
       size_y: parseFloat(sizeYRef.current?.value || 20),
       size_z: parseFloat(sizeZRef.current?.value || 20),
-      exhaustiveness: 8,
-      num_modes: 9
+      exhaustiveness: dockParams.exhaustiveness,
+      num_modes: dockParams.num_modes,
+      seed: dockParams.seed
     }
     
     setIsLoading(true)
@@ -373,15 +379,6 @@ function DockingPage() {
                     disabled={!jobMetadata}
                   >
                     Metadata
-                    {jobMetadata?.engine_metadata?.is_mock !== undefined && (
-                      <span className={`ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                        jobMetadata.engine_metadata.is_mock 
-                          ? 'bg-red-100 text-red-800' 
-                          : 'bg-green-100 text-green-800'
-                      }`}>
-                        {jobMetadata.engine_metadata.is_mock ? 'MOCK' : 'REAL'}
-                      </span>
-                    )}
                   </button>
                 </nav>
               </div>
@@ -473,24 +470,7 @@ function DockingPage() {
           </div>
           <div className="space-y-6">
             <div className="bg-white rounded-lg shadow-lg p-6">
-              <h2 className="text-xl font-semibold mb-4">Protein Loader</h2>
-              <label className="block text-sm font-medium text-gray-700 mb-2">PDB ID</label>
-              <div className="flex space-x-2">
-                <input 
-                  value={pdbId} 
-                  onChange={(e)=>setPdbId(e.target.value.toUpperCase())} 
-                  className="flex-1 border rounded px-3 py-2" 
-                  placeholder="e.g., 1CRN"
-                  disabled={isLoading}
-                />
-                <button 
-                  onClick={handleLoadProtein}
-                  disabled={isLoading}
-                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isLoading ? 'Loading...' : 'Load'}
-                </button>
-              </div>
+              <ProteinSelector pdbId={pdbId} setPdbId={setPdbId} onLoad={handleLoadProtein} isLoading={isLoading} />
               {proteinInfo && (
                 <div className="mt-3 p-3 bg-green-50 rounded">
                   <p className="text-sm text-green-800">
@@ -505,96 +485,19 @@ function DockingPage() {
               )}
               <p className="text-xs text-gray-500 mt-2">Backend: /api/pdb/{'{pdbId}'}/info</p>
             </div>
-            <div className="bg-white rounded-lg shadow-lg p-6">
-              <h2 className="text-xl font-semibold mb-4">Docking Controls</h2>
-              <div className="grid grid-cols-3 gap-3 text-sm">
-                <div>
-                  <label className="block text-gray-600 mb-1">Center X</label>
-                  <input 
-                    ref={centerXRef}
-                    className="w-full border rounded px-2 py-1" 
-                    defaultValue={bindingSite.center_x}
-                    type="number"
-                    step="0.1"
-                    disabled={isLoading}
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-600 mb-1">Center Y</label>
-                  <input 
-                    ref={centerYRef}
-                    className="w-full border rounded px-2 py-1" 
-                    defaultValue={bindingSite.center_y}
-                    type="number"
-                    step="0.1"
-                    disabled={isLoading}
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-600 mb-1">Center Z</label>
-                  <input 
-                    ref={centerZRef}
-                    className="w-full border rounded px-2 py-1" 
-                    defaultValue={bindingSite.center_z}
-                    type="number"
-                    step="0.1"
-                    disabled={isLoading}
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-600 mb-1">Size X</label>
-                  <input 
-                    ref={sizeXRef}
-                    className="w-full border rounded px-2 py-1" 
-                    defaultValue={bindingSite.size_x}
-                    type="number"
-                    step="0.1"
-                    min="1"
-                    disabled={isLoading}
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-600 mb-1">Size Y</label>
-                  <input 
-                    ref={sizeYRef}
-                    className="w-full border rounded px-2 py-1" 
-                    defaultValue={bindingSite.size_y}
-                    type="number"
-                    step="0.1"
-                    min="1"
-                    disabled={isLoading}
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-600 mb-1">Size Z</label>
-                  <input 
-                    ref={sizeZRef}
-                    className="w-full border rounded px-2 py-1" 
-                    defaultValue={bindingSite.size_z}
-                    type="number"
-                    step="0.1"
-                    min="1"
-                    disabled={isLoading}
-                  />
-                </div>
-              </div>
-              <button 
-                onClick={handleRunDocking}
-                disabled={isLoading || !proteinLoaded || !currentSMILES}
-                className="mt-4 w-full px-4 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isLoading ? 'Running...' : 'Run Docking'}
-              </button>
-              {dockingJob && (
-                <div className="mt-3 p-3 bg-blue-50 rounded">
-                  <p className="text-sm text-blue-800">
-                    Job: {dockingJob.job_id ? dockingJob.job_id.substring(0, 8) : 'N/A'}...
-                  </p>
-                  <p className="text-xs text-blue-600">
-                    Status: {dockingJob.status}
-                  </p>
-                </div>
-              )}
+            <div className="bg-white rounded-lg shadow-lg p-6 space-y-4">
+              <BindingSiteConfigurator
+                bindingSite={bindingSite}
+                setBindingSite={setBindingSite}
+                refs={{ centerXRef, centerYRef, centerZRef, sizeXRef, sizeYRef, sizeZRef }}
+              />
+              <DockingParameters params={dockParams} setParams={setDockParams} />
+              <JobManager
+                onRunDocking={handleRunDocking}
+                onExport={handleExportResults}
+                isLoading={isLoading}
+                progress={jobMetadata?.progress}
+              />
             </div>
             <div className="bg-white rounded-lg shadow-lg p-6">
               <h2 className="text-xl font-semibold mb-4">Results</h2>

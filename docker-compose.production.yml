@@ -6,9 +6,15 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DEBUG=True
-      - DJANGO_SETTINGS_MODULE=core.settings  # Use production settings (DOCKING_ALLOW_MOCK=False)
-      - DOCKING_ALLOW_MOCK=False  # Force disable mock, require real AutoDock Vina
+      - DEBUG=False
+      - DJANGO_SETTINGS_MODULE=core.settings
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-*}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
+      - CSRF_TRUSTED_ORIGINS=${CSRF_TRUSTED_ORIGINS:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - WHITENOISE_MAX_AGE=${WHITENOISE_MAX_AGE:-31536000}
+      - DOCKING_ALLOW_MOCK=False
     volumes:
       - ./lipid_viewer/dist:/app/staticfiles/frontend
     restart: unless-stopped

@@ -57,18 +57,18 @@ class GeometricPocketDetector:
             List of detected cavities with properties
         """
         if not POCKET_LIBS_AVAILABLE:
-            return self._fallback_detection()
+            raise RuntimeError("Pocket detection libraries are not available. Please install BioPython, ProDy, and SciPy.")
         
         try:
             # Parse structure
             structure = self._parse_pdb_content(pdb_content)
             if not structure:
-                return self._fallback_detection()
+                raise RuntimeError("Failed to parse PDB structure")
             
             # Extract atomic coordinates
             coords, atom_types = self._extract_coordinates(structure)
             if len(coords) == 0:
-                return self._fallback_detection()
+                raise RuntimeError("No atomic coordinates found in PDB structure")
             
             # Find cavities using different methods
             cavities = []
@@ -89,7 +89,7 @@ class GeometricPocketDetector:
             
         except Exception as e:
             logger.error(f"Cavity detection failed: {e}")
-            return self._fallback_detection()
+            raise RuntimeError(f"Cavity detection failed: {e}")
     
     def _parse_pdb_content(self, pdb_content: str):
         """Parse PDB content using BioPython"""
@@ -334,6 +334,7 @@ class GeometricPocketDetector:
     
     def _rank_cavities(self, cavities: List[Dict], protein_coords: np.ndarray) -> List[Dict]:
         """Rank cavities by druggability and binding potential"""
+        import numpy as np
         
         for cavity in cavities:
             center = np.array(cavity['center'])
@@ -347,7 +348,7 @@ class GeometricPocketDetector:
             score += volume_score * 0.3
             
             # Factor 2: Distance from protein surface (buried cavities are better)
-            distances = cdist([center], protein_coords)[0]
+            distances = np.linalg.norm(protein_coords - center, axis=1)
             min_distance = np.min(distances)
             surface_score = max(0.0, 1.0 - min_distance / 10.0)
             score += surface_score * 0.2
@@ -380,18 +381,7 @@ class GeometricPocketDetector:
         
         return cavities
     
-    def _fallback_detection(self) -> List[Dict]:
-        """Fallback pocket detection when libraries aren't available"""
-        return [
-            {
-                'rank': 1,
-                'center': [0.0, 0.0, 0.0],
-                'volume': 200.0,
-                'druggability_score': 0.7,
-                'method': 'fallback',
-                'confidence': 0.5
-            }
-        ]
+
 
 
 class RealPocketDetector:
@@ -415,9 +405,7 @@ class RealPocketDetector:
             List of detected pockets with properties
         """
         if not RealPocketDetector.is_available():
-            # Fallback to mock implementation
-            logger.warning("Real pocket detection not available, using mock")
-            return PocketDetector._detect_pockets_mock(pdb_id, pdb_content)
+            raise RuntimeError("Pocket detection libraries are not available. Please install BioPython, ProDy, and SciPy.")
         
         try:
             with GeometricPocketDetector() as detector:
@@ -437,8 +425,7 @@ class RealPocketDetector:
                 
         except Exception as e:
             logger.error(f"Real pocket detection failed: {e}")
-            # Fallback to mock
-            return PocketDetector._detect_pockets_mock(pdb_id, pdb_content)
+            raise RuntimeError(f"Pocket detection failed: {e}")
     
     @staticmethod
     def analyze_site_vs_pockets(docking_params: Dict, detected_pockets: List[Dict]) -> Dict[str, Any]:
@@ -528,76 +515,62 @@ class PocketDetector:
         return RealPocketDetector.analyze_site_vs_pockets(docking_params, detected_pockets)
     
     @staticmethod
-    def _detect_pockets_mock(pdb_id: str, pdb_content: str) -> List[Dict]:
+    def analyze_pocket_druggability(pocket: Dict) -> Dict:
         """
-        Mock pocket detection for fallback
+        Analyze pocket druggability using real descriptors
         """
-        import random
-        import math
+        if not RealPocketDetector.is_available():
+            raise RuntimeError("Pocket analysis tools are not available.")
         
-        # Mock pocket detection - in reality this would:
-        # 1. Write PDB to temporary file
-        # 2. Run fpocket or similar tool
-        # 3. Parse pocket detection results
+        volume = pocket.get('volume', 0)
+        surface_area = pocket.get('surface_area', 0)
         
-        num_pockets = random.randint(2, 8)
-        pockets = []
+        # Calculate druggability metrics
+        volume_sa_ratio = volume / surface_area if surface_area > 0 else 0
         
-        for i in range(num_pockets):
-            # Generate realistic pocket properties
-            center_x = random.uniform(-20, 20)
-            center_y = random.uniform(-20, 20)
-            center_z = random.uniform(-20, 20)
-            
-            pocket = {
-                'pocket_number': i + 1,
-                'center_x': round(center_x, 3),
-                'center_y': round(center_y, 3),
-                'center_z': round(center_z, 3),
-                'radius': round(random.uniform(8, 25), 2),
-                'volume': round(random.uniform(200, 2000), 1),
-                'surface_area': round(random.uniform(400, 3000), 1),
-                'druggability_score': round(random.uniform(0.3, 1.0), 3),
-                'hydrophobicity': round(random.uniform(0.2, 0.8), 3),
-                'polarity': round(random.uniform(0.1, 0.7), 3),
-                'confidence_score': round(random.uniform(0.6, 0.95), 3),
-                'detection_method': 'fpocket',
-                'residues': PocketDetector._generate_pocket_residues_mock(),
-                'properties': {
-                    'is_druggable': random.choice([True, False]),
-                    'cavity_type': random.choice(['deep', 'shallow', 'tunnel', 'cleft']),
-                    'accessibility': random.choice(['buried', 'surface', 'partially_buried']),
-                    'conservation_score': round(random.uniform(0.0, 1.0), 3)
-                }
-            }
-            
-            pockets.append(pocket)
+        analysis = {
+            'druggability_class': 'high' if pocket.get('druggability_score', 0) > 0.7 else 
+                                 'medium' if pocket.get('druggability_score', 0) > 0.4 else 'low',
+            'volume_category': 'large' if volume > 1000 else 'medium' if volume > 500 else 'small',
+            'shape_analysis': {
+                'volume_surface_ratio': round(volume_sa_ratio, 3),
+                'sphericity': round(min(1.0, volume / 523.6), 3),  # Compare to perfect sphere
+                'elongation': round(max(0.1, 1.0 - volume_sa_ratio / 0.1), 3)
+            },
+            'chemical_environment': {
+                'hydrophobic_percentage': round(pocket.get('hydrophobicity', 0.5) * 100, 1),
+                'polar_percentage': round(pocket.get('polarity', 0.3) * 100, 1),
+                'charged_residues': len([r for r in pocket.get('residues', []) 
+                                       if r.get('residue_name') in ['ARG', 'LYS', 'ASP', 'GLU']]),
+                'aromatic_residues': len([r for r in pocket.get('residues', []) 
+                                        if r.get('residue_name') in ['PHE', 'TYR', 'TRP']])
+            },
+            'recommendations': _get_druggability_recommendations(pocket)
+        }
         
-        # Sort by druggability score (highest first)
-        pockets.sort(key=lambda x: x['druggability_score'], reverse=True)
-        
-        return pockets
+        return analysis
+
+
+def _get_druggability_recommendations(pocket: Dict) -> List[str]:
+    """Generate druggability recommendations based on pocket properties"""
+    recommendations = []
     
-    @staticmethod
-    def _generate_pocket_residues_mock() -> List[Dict]:
-        """Generate mock residue list for pocket"""
-        import random
-        
-        amino_acids = ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLU', 'GLN', 'GLY', 
-                      'HIS', 'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 
-                      'THR', 'TRP', 'TYR', 'VAL']
-        
-        num_residues = random.randint(10, 30)
-        residues = []
-        
-        for i in range(num_residues):
-            residue = {
-                'residue_name': random.choice(amino_acids),
-                'residue_number': random.randint(50, 300),
-                'chain_id': random.choice(['A', 'B']),
-                'distance_to_center': round(random.uniform(3.0, 15.0), 2),
-                'contact_type': random.choice(['direct', 'water_mediated', 'van_der_waals'])
-            }
-            residues.append(residue)
-        
-        return residues
+    volume = pocket.get('volume', 0)
+    druggability = pocket.get('druggability_score', 0)
+    
+    if druggability > 0.8:
+        recommendations.append("Excellent druggability - high priority target")
+    elif druggability > 0.6:
+        recommendations.append("Good druggability - suitable for drug development")
+    else:
+        recommendations.append("Low druggability - consider fragment-based approaches")
+    
+    if volume < 300:
+        recommendations.append("Small pocket - consider fragment screening")
+    elif volume > 1500:
+        recommendations.append("Large pocket - may require larger molecules or protein-protein interaction inhibitors")
+    
+    if pocket.get('hydrophobicity', 0) > 0.7:
+        recommendations.append("Highly hydrophobic pocket - lipophilic compounds preferred")
+    
+    return recommendations

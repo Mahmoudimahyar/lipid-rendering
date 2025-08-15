@@ -55,6 +55,11 @@ class DockingJob(models.Model):
     # Performance metrics
     cpu_time = models.FloatField(null=True, blank=True, help_text="CPU time in seconds")
     memory_usage = models.IntegerField(null=True, blank=True, help_text="Peak memory usage in MB")
+    # Progress tracking (Phase 4)
+    progress_percent = models.FloatField(null=True, blank=True, help_text="Job progress percent (0-100)")
+    estimated_seconds_remaining = models.FloatField(null=True, blank=True, help_text="Estimated seconds remaining")
+    last_progress_at = models.DateTimeField(null=True, blank=True, help_text="Last progress update timestamp")
+    progress_message = models.CharField(max_length=255, null=True, blank=True, help_text="Human-readable progress message")
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -107,27 +112,65 @@ class BindingPocket(models.Model):
     center_x = models.FloatField(help_text="X coordinate of pocket center")
     center_y = models.FloatField(help_text="Y coordinate of pocket center") 
     center_z = models.FloatField(help_text="Z coordinate of pocket center")
-    radius = models.FloatField(help_text="Pocket radius in Angstroms")
+    radius = models.FloatField(null=True, blank=True, help_text="Pocket radius in Angstroms")
     volume = models.FloatField(help_text="Pocket volume in cubic Angstroms")
+    surface_area = models.FloatField(null=True, blank=True, help_text="Pocket surface area in square Angstroms")
     
     # Pocket properties
     druggability_score = models.FloatField(null=True, blank=True, help_text="Druggability score (0-1)")
     hydrophobicity = models.FloatField(null=True, blank=True, help_text="Hydrophobicity score")
     polarity = models.FloatField(null=True, blank=True, help_text="Polarity score")
     
+    # Enhanced pocket analysis
+    pocket_rank = models.IntegerField(null=True, blank=True, help_text="Rank among detected pockets")
+    shape_analysis = models.JSONField(null=True, blank=True, help_text="Shape and geometry analysis")
+    chemical_environment = models.JSONField(null=True, blank=True, help_text="Chemical environment analysis")
+    druggability_analysis = models.JSONField(null=True, blank=True, help_text="Detailed druggability analysis")
+    
     # Detection metadata
     detection_method = models.CharField(max_length=50, default='fpocket', help_text="Method used for detection")
+    detection_software = models.CharField(max_length=100, null=True, blank=True, help_text="Software used for detection")
     confidence_score = models.FloatField(help_text="Confidence in pocket detection")
     residues = models.JSONField(help_text="List of residues forming the pocket")
     
+    # Additional properties for enhanced analysis
+    cavity_type = models.CharField(max_length=50, null=True, blank=True, help_text="Type of cavity (deep, shallow, tunnel, cleft)")
+    accessibility = models.CharField(max_length=50, null=True, blank=True, help_text="Accessibility level (buried, surface, partially_buried)")
+    conservation_score = models.FloatField(null=True, blank=True, help_text="Evolutionary conservation score")
+    
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        ordering = ['-confidence_score']
+        ordering = ['-druggability_score', '-confidence_score']
         unique_together = ['protein_pdb_id', 'center_x', 'center_y', 'center_z']
     
     def __str__(self):
-        return f"Pocket {self.pocket_id} in {self.protein_pdb_id}"
+        return f"Pocket {self.pocket_id} in {self.protein_pdb_id} (Score: {self.druggability_score})"
+    
+    def get_center_coordinates(self):
+        """Get pocket center as list"""
+        return [self.center_x, self.center_y, self.center_z]
+    
+    def distance_to_point(self, x, y, z):
+        """Calculate distance from pocket center to given point"""
+        import math
+        return math.sqrt((self.center_x - x)**2 + (self.center_y - y)**2 + (self.center_z - z)**2)
+    
+    def is_druggable(self):
+        """Check if pocket is considered druggable"""
+        return self.druggability_score and self.druggability_score > 0.5
+    
+    def get_druggability_class(self):
+        """Get druggability classification"""
+        if not self.druggability_score:
+            return 'unknown'
+        elif self.druggability_score > 0.7:
+            return 'high'
+        elif self.druggability_score > 0.4:
+            return 'medium'
+        else:
+            return 'low'
 
 
 class JobTemplate(models.Model):

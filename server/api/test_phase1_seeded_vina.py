@@ -492,10 +492,10 @@ class TestStructuredLogging(TestCase):
                 # Mock the background task execution to be synchronous
                 with patch('threading.Thread') as mock_thread:
                     def run_task_sync(target, args, **kwargs):
-                        target(*args)
-                        mock_obj = MagicMock()
-                        mock_obj.start = MagicMock()
-                        return mock_obj
+                        # Run asynchronously to preserve initial pending status; then run synchronously for logging
+                        obj = MagicMock()
+                        obj.start = MagicMock(side_effect=lambda: target(*args))
+                        return obj
                     mock_thread.side_effect = run_task_sync
                     
                     response = self.client.post(

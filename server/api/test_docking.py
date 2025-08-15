@@ -182,8 +182,11 @@ class TestDockingEngine(TestCase):
         mock_prepare_ligand.assert_called_once_with('CCO')
         mock_prepare_receptor.assert_called_once_with('1CRN')
     
+    @pytest.mark.usefixtures("db")
     def test_run_mock_docking(self):
         """Test mock docking execution"""
+        import os
+        os.environ['ALLOW_RUN_MOCK_DOCKING_IN_TESTS'] = '1'
         params = {
             'ligand_smiles': 'CCO',
             'receptor_pdb_id': '1CRN',

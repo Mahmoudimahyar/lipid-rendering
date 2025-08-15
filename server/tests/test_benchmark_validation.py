@@ -99,7 +99,7 @@ class BenchmarkValidationTest(TestCase):
             self.assertIn('distance_accuracy', validation)
             self.assertIn('scientific_validity', validation)
     
-    @patch('api.docking_engine.DockingEngine.dock_molecule')
+    @patch('api.docking_utils.DockingEngine.dock_molecule')
     def test_position_accuracy_validation(self, mock_dock):
         """Test position accuracy against known binding sites."""
         benchmark = self.benchmark_complexes[0]

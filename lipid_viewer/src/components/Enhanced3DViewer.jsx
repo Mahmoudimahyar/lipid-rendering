@@ -894,7 +894,9 @@ function Enhanced3DViewer({
       console.log(`🔧 Embedding coordinates for pose ${pose.mode}`)
       console.log(`🔧 Input coordinates: (${pose.center_x}, ${pose.center_y}, ${pose.center_z})`)
       
-      if (!pose.center_x || !pose.center_y || !pose.center_z) {
+      if (pose.center_x === undefined || pose.center_x === null || 
+          pose.center_y === undefined || pose.center_y === null || 
+          pose.center_z === undefined || pose.center_z === null) {
         console.warn(`⚠️ Pose ${pose.mode} missing coordinates, using original SDF`)
         console.warn(`⚠️ Coordinates check: x=${pose.center_x}, y=${pose.center_y}, z=${pose.center_z}`)
         return originalSDF
@@ -966,9 +968,9 @@ function Enhanced3DViewer({
       console.log(`📊 Original centroid: (${originalCentroidX.toFixed(3)}, ${originalCentroidY.toFixed(3)}, ${originalCentroidZ.toFixed(3)})`)
       
       // Calculate the translation needed to move from original centroid to pose coordinates
-      let targetX = pose.center_x || 0
-      let targetY = pose.center_y || 0
-      let targetZ = pose.center_z || 0
+      let targetX = pose.center_x !== undefined && pose.center_x !== null ? pose.center_x : 0
+      let targetY = pose.center_y !== undefined && pose.center_y !== null ? pose.center_y : 0
+      let targetZ = pose.center_z !== undefined && pose.center_z !== null ? pose.center_z : 0
       
       // CRITICAL FIX: Only apply coordinate system alignment if docking coordinates seem relative to origin
       // and protein is far from origin. If docking coordinates are already in protein coordinate system, don't adjust

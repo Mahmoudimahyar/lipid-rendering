@@ -48,7 +48,7 @@ const HybridDockingController = ({
       
       setEngineCapabilities(capabilities);
       engines.serverGpu = capabilities.cuda_available || false;
-      engines.serverCpu = capabilities.vina_available || capabilities.mock_allowed || false;
+      engines.serverCpu = capabilities.vina_available || false;
       
       console.log('🔍 Engine capabilities detected:', capabilities);
     } catch (error) {
@@ -331,8 +331,7 @@ const HybridDockingController = ({
             <strong>Server Capabilities:</strong> 
             {engineCapabilities.vina_available && ` AutoDock Vina ${engineCapabilities.vina_version || 'unknown'}`}
             {engineCapabilities.cuda_available && ` • CUDA GPU`}
-            {engineCapabilities.mock_allowed && ` • Mock Mode`}
-            {!engineCapabilities.vina_available && !engineCapabilities.mock_allowed && ` Unavailable`}
+            {!engineCapabilities.vina_available && ` Unavailable`}
           </div>
         )}
       </div>

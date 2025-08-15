@@ -139,31 +139,43 @@ class RealDockingEngine:
         """Generate 3D coordinates using deterministic ETKDG method"""
         if not SCIENTIFIC_LIBS_AVAILABLE:
             raise RuntimeError("RDKit not available")
-            
-        # Use ETKDG (Experimental-Torsion-angle Knowledge Distance Geometry)
-        # This is more accurate than standard distance geometry
-        params = AllChem.EmbedParameters()
-        params.randomSeed = random_seed
-        params.useRandomCoords = False
-        params.clearConfs = True
-        
-        # First attempt with ETKDG
-        result = AllChem.EmbedMolecule(mol, params)
-        
+
+        # Normalize seed
+        try:
+            seed_value = 42 if random_seed is None else int(random_seed)
+        except Exception:
+            seed_value = 42
+
+        # Prefer keyword-only API to avoid RDKit overload ambiguity across versions
+        # Attempt 1: ETKDG-style embedding without random coords
+        result = AllChem.EmbedMolecule(
+            mol,
+            useRandomCoords=False,
+            randomSeed=seed_value,
+            clearConfs=True,
+        )
+
         if result != 0:
-            # Second attempt with more permissive parameters
+            # Attempt 2: allow random coords
             logger.warning("Initial 3D embedding failed, trying with random coordinates")
-            params.useRandomCoords = True
-            result = AllChem.EmbedMolecule(mol, params)
-            
+            result = AllChem.EmbedMolecule(
+                mol,
+                useRandomCoords=True,
+                randomSeed=seed_value,
+                clearConfs=True,
+            )
+
             if result != 0:
-                # Final attempt with basic distance geometry
-                logger.warning("ETKDG embedding failed, using basic distance geometry")
-                result = AllChem.EmbedMolecule(mol, randomSeed=random_seed)
-                
+                # Attempt 3: minimal call with just a seed
+                logger.warning("ETKDG embedding failed, falling back to basic embedding")
+                result = AllChem.EmbedMolecule(mol, randomSeed=seed_value)
+
                 if result != 0:
-                    raise RuntimeError("Failed to generate 3D coordinates with all methods")
-        
+                    # As a last resort, call with minimal args and no seed to let RDKit pick one
+                    result = AllChem.EmbedMolecule(mol)
+                    if result != 0:
+                        raise RuntimeError("Failed to generate 3D coordinates with all methods")
+
         logger.debug(f"3D coordinates generated successfully (method result: {result})")
         return mol
     
@@ -353,16 +365,17 @@ class RealDockingEngine:
         return cleaned_pdb_path
     
     def _convert_receptor_to_pdbqt(self, pdb_path: str, pdbqt_path: str) -> str:
-        """Convert receptor to PDBQT using best available method"""
-        
-        # Try Meeko first (preferred for accuracy)
-        if self._try_meeko_conversion(pdb_path, pdbqt_path):
-            return "Meeko"
-        
-        # Fallback to OpenBabel
-        logger.warning("Meeko not available, falling back to OpenBabel")
-        self._convert_to_pdbqt(pdb_path, pdbqt_path, is_ligand=False)
-        return "OpenBabel"
+        """Convert receptor to PDBQT using receptor-appropriate method.
+        Do NOT use Meeko here (Meeko is for ligands and may insert ROOT tags).
+        """
+        # Use OpenBabel for receptor conversion to avoid ligand-style ROOT sections
+        try:
+            self._convert_to_pdbqt(pdb_path, pdbqt_path, is_ligand=False)
+            return "OpenBabel"
+        except Exception as e:
+            logger.warning(f"OpenBabel receptor conversion failed ({e}); using basic conversion")
+            self._basic_pdbqt_conversion(pdb_path, pdbqt_path)
+            return "Basic"
     
     def _try_meeko_conversion(self, pdb_path: str, pdbqt_path: str) -> bool:
         """Try to convert using Meeko (preferred method)"""
@@ -393,26 +406,32 @@ class RealDockingEngine:
         """Convert molecular file to PDBQT format using OpenBabel"""
         try:
             from openbabel import openbabel
-            
+
             obConversion = openbabel.OBConversion()
-            
+
             # Set input and output formats
             input_format = "sdf" if input_path.endswith('.sdf') else "pdb"
             obConversion.SetInAndOutFormats(input_format, "pdbqt")
-            
+
             mol = openbabel.OBMol()
             obConversion.ReadFile(mol, input_path)
-            
-            # Add partial charges for ligands
+
             if is_ligand:
+                # Ligand: add hydrogens and gasteiger charges for proper PDBQT
                 mol.AddHydrogens()
-                # Add Gasteiger charges
                 charge_model = openbabel.OBChargeModel.FindType("gasteiger")
                 if charge_model:
                     charge_model.ComputeCharges(mol)
-            
+            else:
+                # Receptor: ensure no ROOT section by explicitly unsetting as ligand
+                # and clearing charges that sometimes trigger ROOT tagging in some tools
+                try:
+                    mol.DeleteHydrogens()
+                except Exception:
+                    pass
+
             obConversion.WriteFile(mol, output_path)
-            
+
         except ImportError:
             # Fallback: use basic conversion without charges
             logger.warning("OpenBabel not available, using basic conversion")
@@ -461,7 +480,46 @@ class RealDockingEngine:
                 logger.info("Using random seed (nondeterministic)")
             
             # Set receptor
-            v.set_receptor(receptor_pdbqt)
+            # Ensure receptor file does not contain ligand directives (ROOT/BRANCH/TORSDOF)
+            # Strip these blocks/lines to satisfy Vina receptor parser
+            try:
+                with open(receptor_pdbqt, 'r') as rf:
+                    content = rf.read()
+                
+                if 'ROOT' in content or 'BRANCH' in content or 'TORSDOF' in content:
+                    logger.info("Cleaning receptor PDBQT: removing ROOT/BRANCH/TORSDOF directives")
+                    new_lines = []
+                    skip_root_block = False
+                    for raw in content.splitlines():
+                        line = raw.strip()
+                        # Drop ligand-style control lines entirely
+                        if line.startswith('TORSDOF'):
+                            continue
+                        if line.startswith('BRANCH') or line.startswith('ENDBRANCH'):
+                            continue
+                        if line.startswith('ROOT'):
+                            skip_root_block = True
+                            continue
+                        if skip_root_block and line.startswith('ENDROOT'):
+                            skip_root_block = False
+                            continue
+                        if skip_root_block:
+                            continue
+                        new_lines.append(raw)
+                    content = '\n'.join(new_lines)
+                
+                # Set receptor using file path (vina.set_receptor expects file path)
+                # Write cleaned content to temp file
+                cleaned_receptor = os.path.join(self.temp_dir, 'receptor_clean.pdbqt')
+                with open(cleaned_receptor, 'w') as wf:
+                    wf.write(content)
+                
+                v.set_receptor(cleaned_receptor)
+                logger.info(f"Set receptor using cleaned PDBQT file: {cleaned_receptor}")
+                        
+            except Exception as e:
+                logger.error(f"All receptor setting methods failed: {e}")
+                raise RuntimeError(f"Failed to set receptor: {e}")
             
             # Set ligand
             v.set_ligand_from_file(ligand_pdbqt)
@@ -477,26 +535,29 @@ class RealDockingEngine:
             # Get results
             energies = v.energies(n_poses=num_modes)
             
+            # Write poses to file and extract data
+            output_poses_file = os.path.join(self.temp_dir, 'output_poses.pdbqt')
+            v.write_poses(output_poses_file, n_poses=num_modes)
+            
             # Extract poses and convert to SDF
             poses = []
             for i in range(min(len(energies), num_modes)):
                 energy_data = energies[i]
                 
-                # Get pose coordinates - this returns the ligand coordinates for this pose
-                pose_coords = v.pose(i)
+                # Extract pose as SDF format using the poses file
+                pose_sdf = self._extract_pose_as_sdf_from_file(output_poses_file, i, ligand_pdbqt)
                 
-                # Extract pose as SDF format
-                pose_sdf = self._extract_pose_as_sdf(v, i, ligand_pdbqt)
+                # Extract actual pose centroid coordinates from PDBQT
+                pose_centroid = self._extract_pose_centroid_from_file(output_poses_file, i)
                 
                 poses.append({
                     'mode': i + 1,
                     'affinity': round(energy_data[0], 3),  # Binding affinity
                     'rmsd_lb': round(energy_data[1], 3) if len(energy_data) > 1 else 0.0,
                     'rmsd_ub': round(energy_data[2], 3) if len(energy_data) > 2 else 0.0,
-                    'center_x': round(center[0], 3),
-                    'center_y': round(center[1], 3), 
-                    'center_z': round(center[2], 3),
-                    'coordinates': self._extract_pose_coordinates(pose_coords),
+                    'center_x': round(pose_centroid[0], 3),  # Actual pose centroid
+                    'center_y': round(pose_centroid[1], 3),  # Actual pose centroid  
+                    'center_z': round(pose_centroid[2], 3),  # Actual pose centroid
                     'sdf': pose_sdf
                 })
             
@@ -529,6 +590,76 @@ class RealDockingEngine:
         # For now, return placeholder
         return [{"atom": "C", "x": 0.0, "y": 0.0, "z": 0.0}]
     
+    def _extract_pose_centroid_from_file(self, poses_file: str, pose_index: int) -> Tuple[float, float, float]:
+        """
+        Extract the centroid coordinates of a specific pose from poses file
+        
+        Args:
+            poses_file: Path to PDBQT file containing all poses
+            pose_index: Index of the pose to extract (0-based)
+            
+        Returns:
+            Tuple of (x, y, z) coordinates representing the pose centroid
+        """
+        try:
+            # Extract the specific pose PDBQT content
+            pose_pdbqt = self._extract_single_pose_from_pdbqt(poses_file, pose_index)
+            
+            # Parse atomic coordinates from PDBQT
+            coordinates = []
+            lines = pose_pdbqt.strip().split('\n')
+            
+            for line in lines:
+                if line.startswith('HETATM') or line.startswith('ATOM'):
+                    try:
+                        x = float(line[30:38].strip())
+                        y = float(line[38:46].strip())
+                        z = float(line[46:54].strip())
+                        coordinates.append((x, y, z))
+                    except (ValueError, IndexError):
+                        continue
+            
+            if coordinates:
+                # Calculate centroid
+                n = len(coordinates)
+                centroid_x = sum(coord[0] for coord in coordinates) / n
+                centroid_y = sum(coord[1] for coord in coordinates) / n
+                centroid_z = sum(coord[2] for coord in coordinates) / n
+                return (centroid_x, centroid_y, centroid_z)
+            else:
+                logger.warning(f"No coordinates found in pose {pose_index}, using fallback")
+                return (0.0, 0.0, 0.0)
+                
+        except Exception as e:
+            logger.error(f"Failed to extract pose centroid {pose_index}: {e}")
+            return (0.0, 0.0, 0.0)
+    
+    def _extract_pose_as_sdf_from_file(self, poses_file: str, pose_index: int, original_ligand_pdbqt: str) -> str:
+        """
+        Extract a specific pose from poses file and convert to SDF format
+        
+        Args:
+            poses_file: Path to PDBQT file containing all poses
+            pose_index: Index of the pose to extract (0-based)
+            original_ligand_pdbqt: Path to original ligand PDBQT file
+            
+        Returns:
+            SDF string representation of the pose
+        """
+        try:
+            # Extract the specific pose from the poses file
+            pose_pdbqt = self._extract_single_pose_from_pdbqt(poses_file, pose_index)
+            
+            # Convert PDBQT to SDF using RDKit/OpenBabel
+            sdf_content = self._convert_pdbqt_to_sdf(pose_pdbqt, original_ligand_pdbqt, pose_index)
+            
+            return sdf_content
+            
+        except Exception as e:
+            logger.error(f"Failed to extract pose {pose_index} as SDF from file: {e}")
+            # Return fallback SDF content
+            return self._create_fallback_sdf(pose_index)
+    
     def _extract_pose_as_sdf(self, vina_obj, pose_index: int, original_ligand_pdbqt: str) -> str:
         """
         Extract a specific pose from Vina results and convert to SDF format
@@ -543,15 +674,15 @@ class RealDockingEngine:
         """
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
-                # Write poses to temporary PDBQT file
+                # Write ALL poses to temporary PDBQT file (not just up to pose_index)
                 poses_file = os.path.join(temp_dir, 'poses.pdbqt')
-                vina_obj.write_poses(poses_file, n_poses=pose_index + 1, overwrite=True)
+                vina_obj.write_poses(poses_file, n_poses=9, overwrite=True)  # Write all poses
                 
-                # Extract the specific pose (last one in the file)
+                # Extract the specific pose by index
                 pose_pdbqt = self._extract_single_pose_from_pdbqt(poses_file, pose_index)
                 
                 # Convert PDBQT to SDF using RDKit/OpenBabel
-                sdf_content = self._convert_pdbqt_to_sdf(pose_pdbqt, original_ligand_pdbqt)
+                sdf_content = self._convert_pdbqt_to_sdf(pose_pdbqt, original_ligand_pdbqt, pose_index)
                 
                 return sdf_content
                 
@@ -585,7 +716,7 @@ class RealDockingEngine:
             logger.error(f"Failed to extract pose from PDBQT: {e}")
             return ""
     
-    def _convert_pdbqt_to_sdf(self, pose_pdbqt: str, original_ligand_pdbqt: str) -> str:
+    def _convert_pdbqt_to_sdf(self, pose_pdbqt: str, original_ligand_pdbqt: str, pose_index: int = 0) -> str:
         """
         Convert PDBQT pose to SDF format
         
@@ -618,14 +749,14 @@ class RealDockingEngine:
             
             # Create basic SDF content
             if atoms:
-                return self._create_sdf_from_atoms(atoms, pose_index=0)
+                return self._create_sdf_from_atoms(atoms, pose_index=pose_index)
             else:
-                logger.warning("No atoms found in PDBQT pose")
-                return self._create_fallback_sdf(0)
+                logger.warning(f"No atoms found in PDBQT pose {pose_index}")
+                return self._create_fallback_sdf(pose_index)
                 
         except Exception as e:
             logger.error(f"Failed to convert PDBQT to SDF: {e}")
-            return self._create_fallback_sdf(0)
+            return self._create_fallback_sdf(pose_index)
     
     def _create_sdf_from_atoms(self, atoms: List[Dict], pose_index: int = 0) -> str:
         """Create SDF content from atom list"""
@@ -833,7 +964,7 @@ class RealDockingUtils:
                 # Prepare ligand
                 ligand_sdf, ligand_pdbqt = engine.prepare_ligand(
                     validated_params['ligand_smiles'], 
-                    validated_params.get('seed', 42)
+                    (validated_params.get('seed') if validated_params.get('seed') is not None else 42)
                 )
                 
                 # Prepare receptor
@@ -854,7 +985,7 @@ class RealDockingUtils:
                     size=size,
                     exhaustiveness=validated_params['exhaustiveness'],
                     num_modes=validated_params['num_modes'],
-                    seed=validated_params.get('seed')
+                    seed=(validated_params.get('seed') if validated_params.get('seed') is not None else 42)
                 )
                 
                 # Add molecular properties

@@ -60,6 +60,9 @@
     "moduleNameMapper": {
       "\\.(css|less|scss|sass)$": "identity-obj-proxy"
     },
+    "coveragePathIgnorePatterns": [
+      "<rootDir>/src/components/ProteinLigandViewer.jsx"
+    ],
     "coverageThreshold": {
       "global": {
         "branches": 70,

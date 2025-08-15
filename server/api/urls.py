@@ -3,7 +3,7 @@ from .views import (
     healthz, dock_capabilities, pdb_proxy, get_protein_info, prepare_ligand, prepare_receptor,
     estimate_binding_site, run_docking, get_docking_status, export_docking_results, list_docking_jobs,
     detect_binding_pockets, rescore_poses, run_advanced_docking, 
-    list_job_templates, get_pocket_list
+    list_job_templates, get_pocket_list, get_pocket_suggestions, analyze_docking_site
 )
 
 urlpatterns = [
@@ -14,7 +14,11 @@ urlpatterns = [
     path('ligand/prepare', prepare_ligand, name='prepare-ligand'),
     path('receptor/prepare', prepare_receptor, name='prepare-receptor'),
     path('binding-site/estimate', estimate_binding_site, name='estimate-binding-site'),
+    path('dock/run', run_docking, name='run_docking'),
+    # Backward-compatible name expected by some tests
     path('dock/run', run_docking, name='run-docking'),
+    # Backward-compatible simple POST mount used in some benchmark tests
+    path('dock', run_docking, name='dock-root'),
     path('dock/status/<str:job_id>', get_docking_status, name='get-docking-status'),
     path('dock/export/<str:job_id>', export_docking_results, name='export-docking-results'),
     path('dock/jobs', list_docking_jobs, name='list-docking-jobs'),
@@ -22,6 +26,8 @@ urlpatterns = [
     # Advanced Features
     path('dock/advanced/run', run_advanced_docking, name='run-advanced-docking'),
     path('pockets/detect', detect_binding_pockets, name='detect-binding-pockets'),
+    path('pockets/suggestions', get_pocket_suggestions, name='get-pocket-suggestions'),
+    path('pockets/analyze-site', analyze_docking_site, name='analyze-docking-site'),
     path('pockets/<str:pdb_id>', get_pocket_list, name='get-pocket-list'),
     path('poses/rescore', rescore_poses, name='rescore-poses'),
     path('templates', list_job_templates, name='list-job-templates'),

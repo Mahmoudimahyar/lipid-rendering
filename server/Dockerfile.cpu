@@ -1,6 +1,13 @@
 # Production Dockerfile with AutoDock Vina (CPU-only)
 # Optimized for systems without CUDA support
 
+# 1) Build frontend (React) with Node in a separate stage
+FROM node:18-bullseye AS frontend-build
+WORKDIR /frontend
+COPY lipid_viewer/ /frontend/
+RUN npm ci --no-audit --prefer-offline && npm run build
+
+# 2) Runtime stage with scientific stack
 FROM ubuntu:22.04
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -15,70 +22,50 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install system dependencies for scientific packages
+# Install minimal system dependencies and micromamba
 RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-dev \
-    build-essential \
-    cmake \
-    git \
-    wget \
-    curl \
-    libboost-all-dev \
-    libopenbabel-dev \
-    openbabel \
-    swig \
-    libeigen3-dev \
-    libcairo2-dev \
-    pkg-config \
-    gcc \
-    g++ \
-    gfortran \
-    libatlas-base-dev \
-    liblapack-dev \
-    libblas-dev \
+    curl bzip2 ca-certificates git build-essential pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Create python3 symlink
-RUN ln -sf /usr/bin/python3 /usr/bin/python
-
-# Install conda for scientific package management
-RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh && \
-    /bin/bash /tmp/miniconda.sh -b -p /opt/conda && \
-    rm /tmp/miniconda.sh && \
-    /opt/conda/bin/conda clean -ya
+ENV MAMBA_ROOT_PREFIX=/opt/conda
+RUN curl -L https://micro.mamba.pm/api/micromamba/linux-64/latest \
+    | tar -xj -C /usr/local/bin --strip-components=1 bin/micromamba
 
 ENV PATH="/opt/conda/bin:$PATH"
 
-# Install scientific computing packages via conda
-RUN conda install -c conda-forge -c rdkit -y \
-    python=3.11 \
-    rdkit \
-    openmm \
-    mdtraj \
-    biopython \
-    scipy \
-    numpy \
-    pandas \
-    && conda clean -ya
+# Install scientific stack from conda-forge (CPU)
+RUN micromamba create -y -p /opt/conda -c conda-forge \
+    python=3.11 rdkit openbabel meeko openmm mdtraj scipy numpy=1.23.5 pandas prody && \
+    micromamba install -y -p /opt/conda -c bioconda -c conda-forge autodock-vina && \
+    micromamba clean -ya
 
-# Install AutoDock Vina (CPU version)
-RUN conda install -c conda-forge -y autodock-vina && conda clean -ya
+## (Optional) Install GNINA (CPU binary if available)
+RUN curl -sSfL -o /usr/local/bin/gnina https://github.com/gnina/gnina/releases/download/v1.0.3/gnina && \
+    chmod +x /usr/local/bin/gnina || true
 
-# Install additional scientific packages via pip
-RUN pip install --no-cache-dir prody openbabel-wheel
+# Install Vina Python binding
+RUN pip install --no-cache-dir vina
 
-# Install Python dependencies
+# Install Python dependencies (strip conda-provided conflicts)
 COPY server/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip && \
+    sed -i '/^rdkit==/d' requirements.txt && \
+    sed -i '/^vina==/d' requirements.txt && \
+    sed -i '/^openmm==/d' requirements.txt && \
+    sed -i '/^mdtraj==/d' requirements.txt && \
+    sed -i '/^openbabel-wheel==/d' requirements.txt && \
+    sed -i '/^torch==/d' requirements.txt && \
+    sed -i '/^torchvision==/d' requirements.txt && \
+    sed -i '/^numpy==/d' requirements.txt && \
+    sed -i '/^scipy==/d' requirements.txt && \
+    sed -i '/^prody==/d' requirements.txt && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy Django application
 COPY server/ /app
 
-# Copy pre-built React frontend
-COPY lipid_viewer/dist/ /app/staticfiles/frontend/
+# Copy built React frontend from builder stage
+COPY --from=frontend-build /frontend/dist/ /app/staticfiles/frontend/
 
 # Create directory for static files
 RUN mkdir -p /app/staticfiles
@@ -90,6 +77,10 @@ RUN python manage.py collectstatic --noinput
 RUN mkdir -p /app/templates && \
     cp /app/staticfiles/frontend/index.html /app/templates/
 
+# Entrypoint: run migrations, collectstatic, then gunicorn
+COPY server/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh && chown -R root:root /app
+
 # Create non-root user for security
 RUN adduser --disabled-password --gecos '' appuser && \
     chown -R appuser:appuser /app
@@ -99,6 +90,6 @@ EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/api/healthz', timeout=10)" || exit 1
+    CMD curl -fsS http://localhost:8000/api/healthz || exit 1
 
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+CMD ["/app/entrypoint.sh"]
